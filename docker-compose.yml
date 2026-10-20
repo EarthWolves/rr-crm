@@ -1,0 +1,23 @@
+# Local development database (and optionally the full app):
+#   docker compose up -d db        # just Postgres on :5432
+#   docker compose --profile app up --build   # Postgres + the app on http://localhost:3000
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: rrcrm
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  app:
+    build: .
+    depends_on: [db]
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/rrcrm
+    ports:
+      - "3000:3000"
+    profiles: [app]
+volumes:
+  pgdata:
