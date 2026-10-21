@@ -5,7 +5,7 @@ import { Pin, Plus, X } from 'lucide-react';
 import { api, type Note } from '../api';
 import { useMe } from '../hooks';
 import { fmtDateTime, timeAgo } from '../lib';
-import { Avatar, Button, Menu, MenuItem, Modal } from './ui';
+import { Avatar, Button, Menu, MenuItem } from './ui';
 
 export function NoteComposer({ contactId }: { contactId: string }) {
   const [body, setBody] = useState('');
@@ -79,23 +79,6 @@ export function NoteCard({ note }: { note: Note }) {
   );
 }
 
-
-export function NotesModal({ contactId, contactName, open, onClose }: { contactId: string; contactName: string; open: boolean; onClose: () => void }) {
-  const notesQ = useQuery({
-    queryKey: ['notes', contactId],
-    queryFn: () => api.get<{ notes: Note[] }>(`/contacts/${contactId}/notes`).then((r) => r.notes),
-    enabled: open,
-  });
-  return (
-    <Modal open={open} onClose={onClose} title={`Notes · ${contactName}`} width="max-w-xl">
-      <NoteComposer contactId={contactId} />
-      <div className="mt-3 space-y-3">
-        {(notesQ.data || []).map((n) => <NoteCard key={n.id} note={n} />)}
-        {notesQ.data && !notesQ.data.length && <div className="py-4 text-center text-sm text-gray-400">No notes yet</div>}
-      </div>
-    </Modal>
-  );
-}
 
 export function useTradeOptions() {
   const q = useQuery({

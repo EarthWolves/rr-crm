@@ -2,14 +2,14 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Columns3, List, MessageSquare, Phone, PhoneCall, PhoneOutgoing, Plus, Search, Settings2 } from 'lucide-react';
+import { Columns3, Globe, List, MessageSquare, Phone, PhoneCall, PhoneOutgoing, Plus, Search, Settings2 } from 'lucide-react';
 import { api, qs, type BoardEntry, type Contact, type User } from '../api';
 import { usePipelines, useUsers } from '../hooks';
-import { fmtDate, isOverdue, outcomeOf, telHref, timeAgo } from '../lib';
+import { fmtDate, isOverdue, outcomeOf, prettySite, siteHref, telHref, timeAgo } from '../lib';
 import { Avatar, Button, EmptyState, Modal, PageHeader, PageLoader, Pill } from '../components/ui';
 import { LogCallModal } from '../components/CallForm';
 import { EditStagesModal } from './Pipelines';
-import { NotesModal, useTradeOptions } from '../components/Notes';
+import { useTradeOptions } from '../components/Notes';
 
 export default function PipelineBoard() {
   const { id } = useParams<{ id: string }>();
@@ -22,7 +22,6 @@ export default function PipelineBoard() {
   const [owner, setOwner] = useState('');
   const [state, setState] = useState('');
   const [trade, setTrade] = useState('');
-  const [notesFor, setNotesFor] = useState<BoardEntry | null>(null);
   const facets = useTradeOptions();
   const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
@@ -125,7 +124,6 @@ export default function PipelineBoard() {
                       users={users}
                       onOpen={() => navigate(`/contacts/${e.contact_id}`)}
                       onLogCall={() => setLogFor(e)}
-                      onNotes={() => setNotesFor(e)}
                     />
                   ))}
                 </div>
@@ -170,7 +168,6 @@ export default function PipelineBoard() {
 
       {editing && <EditStagesModal pipeline={pipeline} open onClose={() => setEditing(false)} />}
       <AddRecordsModal open={adding} onClose={() => setAdding(false)} pipelineId={pipeline.id} stages={pipeline.stages} />
-      {notesFor && <NotesModal open contactId={notesFor.contact_id} contactName={notesFor.name} onClose={() => setNotesFor(null)} />}
       {logFor && (
         <LogCallModal
           open
@@ -234,19 +231,26 @@ function AddRecordsModal({ open, onClose, pipelineId, stages }: { open: boolean;
   );
 }
 
-function BoardCard({ e, users, onOpen, onLogCall, onNotes }: {
+function BoardCard({ e, users, onOpen, onLogCall }: {
   e: BoardEntry;
   users: User[];
   onOpen: () => void;
   onLogCall: () => void;
-  onNotes: () => void;
 }) {
+  const [draft, setDraft] = useState('');
+  const [typing, setTyping] = useState(false);
   const setOwner = useMutation({ mutationFn: (ownerId: string | null) => api.patch(`/contacts/${e.contact_id}`, { owner_id: ownerId }) });
+  const addNote = useMutation({
+    mutationFn: () => api.post(`/contacts/${e.contact_id}/notes`, { body: draft.trim() }),
+    onSuccess: () => setDraft(''),
+  });
   const owner = users.find((u) => u.id === e.owner_id);
   const stop = (ev: React.SyntheticEvent) => ev.stopPropagation();
+  const save = () => draft.trim() && !addNote.isPending && addNote.mutate();
   return (
     <div
-      draggable
+      // Dragging is switched off while typing so selecting text in the note box doesn't pick up the card.
+      draggable={!typing}
       onDragStart={(ev) => { ev.dataTransfer.setData('text/entry', e.id); ev.dataTransfer.effectAllowed = 'move'; }}
       onClick={onOpen}
       className="cursor-pointer rounded-lg border border-gray-200 bg-white p-2.5 shadow-xs transition hover:border-gray-300 hover:shadow-sm active:cursor-grabbing"
@@ -265,10 +269,17 @@ function BoardCard({ e, users, onOpen, onLogCall, onNotes }: {
       ) : (
         <div className="mt-2 rounded-md bg-gray-50 px-2 py-1 text-xs text-gray-400">No phone number</div>
       )}
-      {e.last_note && (
-        <button onClick={(ev) => { stop(ev); onNotes(); }} className="mt-2 w-full rounded-md bg-amber-50/70 px-2 py-1 text-left text-xs text-gray-700 hover:bg-amber-50">
-          <span className="line-clamp-2">{e.last_note}</span>
-        </button>
+      {e.website && (
+        <a
+          href={siteHref(e.website)}
+          target="_blank"
+          rel="noreferrer"
+          onClick={stop}
+          className="mt-1 flex items-center gap-1.5 truncate px-2 py-0.5 text-xs text-indigo-600 hover:underline"
+        >
+          <Globe className="size-3 shrink-0" />
+          <span className="truncate">{prettySite(e.website)}</span>
+        </a>
       )}
       {(e.last_outcome || e.call_count > 0 || e.next_follow_up_at) && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
@@ -277,6 +288,39 @@ function BoardCard({ e, users, onOpen, onLogCall, onNotes }: {
           {e.next_follow_up_at && <span className={clsx(isOverdue(e.next_follow_up_at) && 'font-medium text-red-600')}>↻ {fmtDate(e.next_follow_up_at)}</span>}
         </div>
       )}
+
+      {/* Notes: fixed-size boxes so nothing moves while you type. */}
+      <div className="mt-2 cursor-default" onClick={stop}>
+        <div className="flex items-center justify-between text-[11px] font-medium text-gray-400">
+          <span className="inline-flex items-center gap-1"><MessageSquare className="size-3" /> Latest note</span>
+          {e.note_count > 1 && <span>{e.note_count} notes</span>}
+        </div>
+        <div className="mt-0.5 h-9 overflow-hidden rounded-md bg-amber-50/70 px-2 py-1 text-xs leading-[14px] text-gray-700">
+          <span className="line-clamp-2">{e.last_note || <span className="text-gray-400">No notes yet</span>}</span>
+        </div>
+        <textarea
+          className="mt-1.5 block h-16 w-full resize-none rounded-md border border-gray-200 px-2 py-1 text-xs outline-none placeholder:text-gray-400 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-50"
+          placeholder="Write a note…"
+          value={draft}
+          onChange={(ev) => setDraft(ev.target.value)}
+          onFocus={() => setTyping(true)}
+          onBlur={() => setTyping(false)}
+          onKeyDown={(ev) => {
+            if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') save();
+          }}
+        />
+        <div className="mt-1 flex items-center justify-between">
+          <span className="text-[10px] text-gray-400">⌘/Ctrl+Enter to save</span>
+          <button
+            onClick={save}
+            disabled={!draft.trim() || addNote.isPending}
+            className="rounded bg-gray-900 px-2 py-0.5 text-[11px] font-medium text-white disabled:bg-gray-200 disabled:text-gray-400"
+          >
+            {addNote.isPending ? 'Saving…' : 'Save note'}
+          </button>
+        </div>
+      </div>
+
       <div className="mt-2 flex items-center gap-1 border-t border-gray-100 pt-2" onClick={stop}>
         <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 hover:bg-gray-100" title="Owner">
           <Avatar user={owner} size={18} />
@@ -289,11 +333,8 @@ function BoardCard({ e, users, onOpen, onLogCall, onNotes }: {
             {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
         </label>
-        <button onClick={onNotes} title="Notes" className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-800">
-          <MessageSquare className="size-3.5" />{e.note_count || ''}
-        </button>
-        <button onClick={onLogCall} title="Log call" className="rounded px-1.5 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800">
-          <PhoneCall className="size-3.5" />
+        <button onClick={onLogCall} title="Log call" className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+          <PhoneCall className="size-3.5" /> Log call
         </button>
       </div>
     </div>
