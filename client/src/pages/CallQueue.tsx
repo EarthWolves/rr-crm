@@ -8,6 +8,7 @@ import { useMe, usePipelines, useUsers } from '../hooks';
 import { OUTCOMES, fmtDateTime, outcomeOf, prettySite, siteHref, telHref, timeAgo } from '../lib';
 import { Avatar, Button, EmptyState, PageHeader, PageLoader, Pill } from '../components/ui';
 import { CallForm } from '../components/CallForm';
+import { useTradeOptions } from '../components/Notes';
 
 export default function CallQueue() {
   const [params, setParams] = useSearchParams();
@@ -22,6 +23,9 @@ export default function CallQueue() {
   const pipeline = pipelines.find((p) => p.id === pipelineId);
   const owner = params.get('owner') || 'any';
   const dueOnly = params.get('due') === '1';
+  const state = params.get('state') || '';
+  const trade = params.get('trade') || '';
+  const facets = useTradeOptions();
   const defaultStages = useMemo(() => pipeline?.stages.filter((s) => s.kind === 'open').map((s) => s.id) || [], [pipeline]);
   const stageIds = params.get('stages')?.split(',').filter(Boolean) || defaultStages;
 
@@ -36,6 +40,8 @@ export default function CallQueue() {
     stageId: pipelineId && stageIds.length ? stageIds.join(',') : undefined,
     owner: owner === 'me' ? me?.id : owner === 'any' ? undefined : owner,
     followUp: dueOnly ? 'due' : undefined,
+    state: state || undefined,
+    trade: trade || undefined,
     sort: 'queue',
     limit: 500,
   };
@@ -124,6 +130,23 @@ export default function CallQueue() {
               <option value="none">Unassigned</option>
               {users.filter((u) => u.id !== me?.id).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className="label">State</div>
+              <select className="input" value={state} onChange={(e) => set({ state: e.target.value })}>
+                <option value="">Any</option>
+                {facets?.states.map((s) => <option key={s.value} value={s.value}>{s.value} ({s.n})</option>)}
+              </select>
+            </div>
+            <div>
+              <div className="label">Trade</div>
+              <select className="input" value={trade} onChange={(e) => set({ trade: e.target.value })}>
+                <option value="">Any</option>
+                {facets?.trades.map((t) => <option key={t.value} value={t.value}>{t.value} ({t.n})</option>)}
+                <option value="none">No trade set</option>
+              </select>
+            </div>
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={dueOnly} onChange={(e) => set({ due: e.target.checked ? '1' : '' })} />

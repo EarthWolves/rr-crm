@@ -31,6 +31,7 @@ export default function Contacts() {
     followUp: params.get('followUp') || '',
     called: params.get('called') || '',
     tag: params.get('tag') || '',
+    trade: params.get('trade') || '',
     sort: params.get('sort') || 'name',
     dir: params.get('dir') || 'asc',
   };
@@ -59,7 +60,7 @@ export default function Contacts() {
   });
   const facets = useQuery({
     queryKey: ['facets'],
-    queryFn: () => api.get<{ states: { value: string; n: number }[]; tags: { value: string; n: number }[] }>('/contacts/facets'),
+    queryFn: () => api.get<{ states: { value: string; n: number }[]; tags: { value: string; n: number }[]; trades: { value: string; n: number }[]; tradeOptions: string[] }>('/contacts/facets'),
   });
 
   const contacts = query.data?.contacts || [];
@@ -80,7 +81,7 @@ export default function Contacts() {
     },
   });
 
-  const activeFilters = ['owner', 'pipelineId', 'state', 'outcome', 'followUp', 'called', 'tag'].filter((k) => f[k as keyof typeof f]).length;
+  const activeFilters = ['owner', 'pipelineId', 'state', 'trade', 'outcome', 'followUp', 'called', 'tag'].filter((k) => f[k as keyof typeof f]).length;
   const selPipeline = pipelines.find((p) => p.id === f.pipelineId);
 
   const SortTh = ({ k, children, className }: { k: string; children: React.ReactNode; className?: string }) => (
@@ -152,6 +153,15 @@ export default function Contacts() {
               {s.value} ({s.n})
             </option>
           ))}
+        </select>
+        <select className="input w-auto" value={f.trade} onChange={(e) => setF({ trade: e.target.value })}>
+          <option value="">Any trade</option>
+          {facets.data?.trades.map((t) => (
+            <option key={t.value} value={t.value}>
+              {t.value} ({t.n})
+            </option>
+          ))}
+          <option value="none">No trade set</option>
         </select>
         <select className="input w-auto" value={f.outcome} onChange={(e) => setF({ outcome: e.target.value })}>
           <option value="">Any last outcome</option>
@@ -259,6 +269,7 @@ export default function Contacts() {
                 </th>
                 <SortTh k="name" className="sticky left-8 z-20 min-w-56">Name</SortTh>
                 <th className="th">Phone</th>
+                <th className="th">Trade</th>
                 <th className="th">Stage</th>
                 <th className="th">Owner</th>
                 <SortTh k="call_count">Calls</SortTh>
@@ -292,6 +303,11 @@ export default function Contacts() {
                           <Phone className="size-3" /> {c.phone}
                         </a>
                       )}
+                    </td>
+                    <td className="td">
+                      <div className="flex max-w-56 gap-1 overflow-hidden">
+                        {c.trades.map((t) => <span key={t} className="rounded bg-sky-50 px-1.5 py-0.5 text-xs whitespace-nowrap text-sky-800">{t}</span>)}
+                      </div>
                     </td>
                     <td className="td">
                       <div className="flex max-w-64 gap-1">

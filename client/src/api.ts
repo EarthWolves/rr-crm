@@ -17,6 +17,7 @@ export type Contact = {
   est_revenue: string | null;
   description: string | null;
   tags: string[];
+  trades: string[];
   custom: Record<string, unknown>;
   owner_id: string | null;
   call_count: number;
@@ -50,6 +51,9 @@ export type BoardEntry = {
   tags: string[];
   employees: string | null;
   est_revenue: string | null;
+  trades: string[];
+  note_count: number;
+  last_note: string | null;
 };
 
 export type Call = {

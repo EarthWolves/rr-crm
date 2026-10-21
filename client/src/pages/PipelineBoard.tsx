@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Columns3, List, Phone, PhoneCall, PhoneOutgoing, Plus, Search, Settings2 } from 'lucide-react';
-import { api, qs, type BoardEntry, type Contact } from '../api';
+import { Columns3, List, MessageSquare, Phone, PhoneCall, PhoneOutgoing, Plus, Search, Settings2 } from 'lucide-react';
+import { api, qs, type BoardEntry, type Contact, type User } from '../api';
 import { usePipelines, useUsers } from '../hooks';
 import { fmtDate, isOverdue, outcomeOf, telHref, timeAgo } from '../lib';
 import { Avatar, Button, EmptyState, Modal, PageHeader, PageLoader, Pill } from '../components/ui';
 import { LogCallModal } from '../components/CallForm';
 import { EditStagesModal } from './Pipelines';
+import { NotesModal, useTradeOptions } from '../components/Notes';
 
 export default function PipelineBoard() {
   const { id } = useParams<{ id: string }>();
@@ -19,6 +20,10 @@ export default function PipelineBoard() {
   const pipeline = pipelines.find((p) => p.id === id);
   const [view, setView] = useState<'board' | 'table'>(() => (localStorage.getItem('boardView') as 'board' | 'table') || 'board');
   const [owner, setOwner] = useState('');
+  const [state, setState] = useState('');
+  const [trade, setTrade] = useState('');
+  const [notesFor, setNotesFor] = useState<BoardEntry | null>(null);
+  const facets = useTradeOptions();
   const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState(false);
@@ -34,10 +39,10 @@ export default function PipelineBoard() {
     try { localStorage.setItem('boardView', view); } catch { /* storage unavailable */ }
   }, [view]);
 
-  const boardKey = ['board', id, owner, q];
+  const boardKey = ['board', id, owner, q, state, trade];
   const board = useQuery({
     queryKey: boardKey,
-    queryFn: () => api.get<{ entries: BoardEntry[] }>(`/pipelines/${id}/board${qs({ owner, q })}`).then((r) => r.entries),
+    queryFn: () => api.get<{ entries: BoardEntry[] }>(`/pipelines/${id}/board${qs({ owner, q, state, trade })}`).then((r) => r.entries),
     enabled: !!id,
   });
 
@@ -77,6 +82,15 @@ export default function PipelineBoard() {
           <option value="none">Unassigned</option>
           {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
         </select>
+        <select className="input w-auto" value={state} onChange={(e) => setState(e.target.value)}>
+          <option value="">Any state</option>
+          {facets?.states.map((s) => <option key={s.value} value={s.value}>{s.value} ({s.n})</option>)}
+        </select>
+        <select className="input w-auto" value={trade} onChange={(e) => setTrade(e.target.value)}>
+          <option value="">Any trade</option>
+          {facets?.trades.map((t) => <option key={t.value} value={t.value}>{t.value} ({t.n})</option>)}
+          <option value="none">No trade set</option>
+        </select>
         <span className="ml-auto text-xs text-gray-500">{entries.length} records</span>
       </div>
 
@@ -105,32 +119,14 @@ export default function PipelineBoard() {
                 </div>
                 <div className="flex-1 space-y-2 overflow-y-auto px-2 pb-2">
                   {list.map((e) => (
-                    <div
+                    <BoardCard
                       key={e.id}
-                      draggable
-                      onDragStart={(ev) => { ev.dataTransfer.setData('text/entry', e.id); ev.dataTransfer.effectAllowed = 'move'; }}
-                      onClick={() => navigate(`/contacts/${e.contact_id}`)}
-                      className="group cursor-pointer rounded-lg border border-gray-200 bg-white p-2.5 shadow-xs transition hover:border-gray-300 hover:shadow-sm active:cursor-grabbing"
-                    >
-                      <div className="flex items-start gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium">{e.name}</div>
-                          <div className="truncate text-xs text-gray-500">{[e.city, e.state].filter(Boolean).join(', ') || e.employees || ' '}</div>
-                        </div>
-                        {e.owner_id && <Avatar user={byId[e.owner_id]} size={18} />}
-                      </div>
-                      <div className="mt-2 flex items-center gap-1.5 text-xs text-gray-500">
-                        {e.last_outcome && <Pill color={outcomeOf(e.last_outcome)?.color}>{outcomeOf(e.last_outcome)?.label}</Pill>}
-                        {e.call_count > 0 && <span className="inline-flex items-center gap-0.5"><PhoneCall className="size-3" />{e.call_count}</span>}
-                        {e.next_follow_up_at && <span className={clsx(isOverdue(e.next_follow_up_at) && 'font-medium text-red-600')}>↻ {fmtDate(e.next_follow_up_at)}</span>}
-                        <div className="ml-auto flex gap-0.5 opacity-0 transition group-hover:opacity-100">
-                          {e.phone && (
-                            <a href={telHref(e.phone)} onClick={(ev) => ev.stopPropagation()} title={e.phone} className="rounded p-1 hover:bg-gray-100"><Phone className="size-3.5" /></a>
-                          )}
-                          <button title="Log call" onClick={(ev) => { ev.stopPropagation(); setLogFor(e); }} className="rounded p-1 hover:bg-gray-100"><PhoneCall className="size-3.5" /></button>
-                        </div>
-                      </div>
-                    </div>
+                      e={e}
+                      users={users}
+                      onOpen={() => navigate(`/contacts/${e.contact_id}`)}
+                      onLogCall={() => setLogFor(e)}
+                      onNotes={() => setNotesFor(e)}
+                    />
                   ))}
                 </div>
               </div>
@@ -143,7 +139,7 @@ export default function PipelineBoard() {
             <thead>
               <tr>
                 <th className="th">Name</th><th className="th">Stage</th><th className="th">Phone</th><th className="th">Owner</th>
-                <th className="th">Calls</th><th className="th">Last outcome</th><th className="th">Last called</th><th className="th">Follow-up</th><th className="th">Location</th><th className="th">In stage since</th>
+                <th className="th">Trade</th><th className="th">Calls</th><th className="th">Last outcome</th><th className="th">Last called</th><th className="th">Follow-up</th><th className="th">Location</th><th className="th">In stage since</th>
               </tr>
             </thead>
             <tbody>
@@ -157,6 +153,7 @@ export default function PipelineBoard() {
                   </td>
                   <td className="td">{e.phone && <a href={telHref(e.phone)} className="hover:text-indigo-600">{e.phone}</a>}</td>
                   <td className="td">{e.owner_id && byId[e.owner_id]?.name}</td>
+                  <td className="td text-xs text-gray-600">{e.trades.join(', ')}</td>
                   <td className="td text-right">{e.call_count || ''}</td>
                   <td className="td">{e.last_outcome && <Pill color={outcomeOf(e.last_outcome)?.color}>{outcomeOf(e.last_outcome)?.label}</Pill>}</td>
                   <td className="td text-gray-500">{timeAgo(e.last_called_at)}</td>
@@ -173,6 +170,7 @@ export default function PipelineBoard() {
 
       {editing && <EditStagesModal pipeline={pipeline} open onClose={() => setEditing(false)} />}
       <AddRecordsModal open={adding} onClose={() => setAdding(false)} pipelineId={pipeline.id} stages={pipeline.stages} />
+      {notesFor && <NotesModal open contactId={notesFor.contact_id} contactName={notesFor.name} onClose={() => setNotesFor(null)} />}
       {logFor && (
         <LogCallModal
           open
@@ -233,5 +231,71 @@ function AddRecordsModal({ open, onClose, pipelineId, stages }: { open: boolean;
         {!candidates.length && <div className="p-4 text-center text-sm text-gray-400">No contacts to add</div>}
       </div>
     </Modal>
+  );
+}
+
+function BoardCard({ e, users, onOpen, onLogCall, onNotes }: {
+  e: BoardEntry;
+  users: User[];
+  onOpen: () => void;
+  onLogCall: () => void;
+  onNotes: () => void;
+}) {
+  const setOwner = useMutation({ mutationFn: (ownerId: string | null) => api.patch(`/contacts/${e.contact_id}`, { owner_id: ownerId }) });
+  const owner = users.find((u) => u.id === e.owner_id);
+  const stop = (ev: React.SyntheticEvent) => ev.stopPropagation();
+  return (
+    <div
+      draggable
+      onDragStart={(ev) => { ev.dataTransfer.setData('text/entry', e.id); ev.dataTransfer.effectAllowed = 'move'; }}
+      onClick={onOpen}
+      className="cursor-pointer rounded-lg border border-gray-200 bg-white p-2.5 shadow-xs transition hover:border-gray-300 hover:shadow-sm active:cursor-grabbing"
+    >
+      <div className="truncate text-sm font-medium">{e.name}</div>
+      <div className="truncate text-xs text-gray-500">{[e.city, e.state].filter(Boolean).join(', ') || e.employees || '\u00a0'}</div>
+      {e.trades.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {e.trades.slice(0, 3).map((t) => <span key={t} className="rounded bg-sky-50 px-1.5 py-0.5 text-[11px] text-sky-800">{t}</span>)}
+        </div>
+      )}
+      {e.phone ? (
+        <a href={telHref(e.phone)} onClick={stop} className="mt-2 flex items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-1 text-sm font-medium text-emerald-800 hover:bg-emerald-100">
+          <Phone className="size-3.5" /> {e.phone}
+        </a>
+      ) : (
+        <div className="mt-2 rounded-md bg-gray-50 px-2 py-1 text-xs text-gray-400">No phone number</div>
+      )}
+      {e.last_note && (
+        <button onClick={(ev) => { stop(ev); onNotes(); }} className="mt-2 w-full rounded-md bg-amber-50/70 px-2 py-1 text-left text-xs text-gray-700 hover:bg-amber-50">
+          <span className="line-clamp-2">{e.last_note}</span>
+        </button>
+      )}
+      {(e.last_outcome || e.call_count > 0 || e.next_follow_up_at) && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
+          {e.last_outcome && <Pill color={outcomeOf(e.last_outcome)?.color}>{outcomeOf(e.last_outcome)?.label}</Pill>}
+          {e.call_count > 0 && <span className="inline-flex items-center gap-0.5"><PhoneCall className="size-3" />{e.call_count}</span>}
+          {e.next_follow_up_at && <span className={clsx(isOverdue(e.next_follow_up_at) && 'font-medium text-red-600')}>↻ {fmtDate(e.next_follow_up_at)}</span>}
+        </div>
+      )}
+      <div className="mt-2 flex items-center gap-1 border-t border-gray-100 pt-2" onClick={stop}>
+        <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 hover:bg-gray-100" title="Owner">
+          <Avatar user={owner} size={18} />
+          <select
+            className="min-w-0 flex-1 cursor-pointer appearance-none truncate bg-transparent text-xs text-gray-700 outline-none"
+            value={e.owner_id || ''}
+            onChange={(ev) => setOwner.mutate(ev.target.value || null)}
+          >
+            <option value="">Unassigned</option>
+            {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+        </label>
+        <button onClick={onNotes} title="Notes" className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+          <MessageSquare className="size-3.5" />{e.note_count || ''}
+        </button>
+        <button onClick={onLogCall} title="Log call" className="rounded px-1.5 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+          <PhoneCall className="size-3.5" />
+        </button>
+      </div>
+    </div>
   );
 }

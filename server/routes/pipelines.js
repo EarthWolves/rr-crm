@@ -103,10 +103,21 @@ router.get('/pipelines/:id/board', async (req, res) => {
     params.push(`%${req.query.q}%`);
     where.push(`(c.name ILIKE $${params.length} OR c.phone ILIKE $${params.length} OR c.state ILIKE $${params.length} OR c.city ILIKE $${params.length})`);
   }
+  if (req.query.state) {
+    params.push(req.query.state);
+    where.push(`c.state ILIKE $${params.length}`);
+  }
+  if (req.query.trade === 'none') where.push('cardinality(c.trades) = 0');
+  else if (req.query.trade) {
+    params.push(String(req.query.trade).split(','));
+    where.push(`c.trades && $${params.length}::text[]`);
+  }
   const { rows } = await query(
     `SELECT e.id, e.stage_id, e.position, e.stage_changed_at, e.contact_id,
             c.name, c.phone, c.website, c.city, c.state, c.owner_id, c.call_count, c.last_outcome,
-            c.last_called_at, c.next_follow_up_at, c.tags, c.employees, c.est_revenue
+            c.last_called_at, c.next_follow_up_at, c.tags, c.employees, c.est_revenue, c.trades,
+            (SELECT count(*)::int FROM notes n WHERE n.contact_id = c.id) AS note_count,
+            (SELECT left(n.body, 200) FROM notes n WHERE n.contact_id = c.id ORDER BY n.pinned DESC, n.created_at DESC LIMIT 1) AS last_note
      FROM pipeline_entries e JOIN contacts c ON c.id = e.contact_id
      WHERE ${where.join(' AND ')}
      ORDER BY e.position, c.name`,

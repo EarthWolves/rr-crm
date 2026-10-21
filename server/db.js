@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { classifyTrades } from './trades.js';
 
 const { Pool, types } = pg;
 
@@ -179,6 +180,16 @@ const migrations = [
   CREATE INDEX activity_contact_idx ON activity(contact_id, created_at DESC);
   CREATE INDEX activity_created_idx ON activity(created_at DESC);
   `,
+  // 2: subcontractor trades, backfilled from existing data
+  async (c) => {
+    await c.query(`ALTER TABLE contacts ADD COLUMN trades text[] NOT NULL DEFAULT '{}'`);
+    await c.query('CREATE INDEX contacts_trades_idx ON contacts USING gin (trades)');
+    const { rows } = await c.query('SELECT id, name, company_type, custom, description FROM contacts');
+    for (const row of rows) {
+      const trades = classifyTrades(row);
+      if (trades.length) await c.query('UPDATE contacts SET trades = $1 WHERE id = $2', [trades, row.id]);
+    }
+  },
 ];
 
 export async function migrate() {
@@ -189,7 +200,8 @@ export async function migrate() {
     const version = i + 1;
     if (applied.has(version)) continue;
     await tx(async (c) => {
-      await c.query(migrations[i]);
+      if (typeof migrations[i] === 'function') await migrations[i](c);
+      else await c.query(migrations[i]);
       await c.query('INSERT INTO schema_migrations(version) VALUES ($1)', [version]);
     });
     console.log(`Applied migration ${version}`);

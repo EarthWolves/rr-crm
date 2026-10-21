@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query, tx } from '../db.js';
 import { HttpError, logActivity, notFound, parse } from '../util.js';
+import { TRADE_NAMES, classifyTrades } from '../trades.js';
 
 export const router = Router();
 
@@ -27,6 +28,7 @@ const contactSchema = z.object({
   description: optStr,
   tags: z.array(z.string().trim().min(1).max(60)).max(50).optional(),
   custom: z.record(z.string(), z.any()).optional(),
+  trades: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   owner_id: z.string().uuid().nullable().optional(),
   next_follow_up_at: z.string().datetime({ offset: true }).nullable().optional(),
   call_count: z.number().int().min(0).optional(),
@@ -69,6 +71,8 @@ function buildFilters(q) {
   if (q.state) where.push(`c.state ILIKE ${p(q.state)}`);
   if (q.outcome) where.push(`c.last_outcome = ${p(q.outcome)}`);
   if (q.tag) where.push(`${p(q.tag)} = ANY(c.tags)`);
+  if (q.trade === 'none') where.push('cardinality(c.trades) = 0');
+  else if (q.trade) where.push(`c.trades && ${p(String(q.trade).split(','))}::text[]`);
   if (q.followUp === 'due') where.push('c.next_follow_up_at IS NOT NULL AND c.next_follow_up_at <= now()');
   if (q.followUp === 'upcoming') where.push('c.next_follow_up_at > now()');
   if (q.called === 'never') where.push('c.call_count = 0');
@@ -104,11 +108,12 @@ router.get('/', async (req, res) => {
 });
 
 router.get('/facets', async (req, res) => {
-  const [states, tags] = await Promise.all([
+  const [states, tags, trades] = await Promise.all([
     query(`SELECT state AS value, count(*)::int AS n FROM contacts WHERE state IS NOT NULL GROUP BY state ORDER BY n DESC LIMIT 100`),
     query(`SELECT t AS value, count(*)::int AS n FROM contacts, unnest(tags) t GROUP BY t ORDER BY n DESC LIMIT 100`),
+    query(`SELECT t AS value, count(*)::int AS n FROM contacts, unnest(trades) t GROUP BY t ORDER BY n DESC`),
   ]);
-  res.json({ states: states.rows, tags: tags.rows });
+  res.json({ states: states.rows, tags: tags.rows, trades: trades.rows, tradeOptions: TRADE_NAMES });
 });
 
 function csvCell(v) {
@@ -128,7 +133,7 @@ router.get('/export.csv', async (req, res) => {
   const userName = Object.fromEntries(users.rows.map((u) => [u.id, u.name]));
   const header = [
     'Name', 'Phone', 'Email', 'Website', 'Contact Person', 'Contact Title', 'City', 'State', 'Company Type',
-    'Employees', 'Est. Revenue', 'Owner', '# Calls', 'Last Outcome', 'Last Called', 'Next Follow-up', 'Tags',
+    'Employees', 'Est. Revenue', 'Owner', '# Calls', 'Last Outcome', 'Last Called', 'Next Follow-up', 'Trades', 'Tags',
     ...pipelines.rows.map((pl) => `Stage: ${pl.name}`),
     ...attrs.rows.map((a) => a.label),
     'Description',
@@ -139,7 +144,7 @@ router.get('/export.csv', async (req, res) => {
     lines.push([
       c.name, c.phone, c.email, c.website, c.contact_person, c.contact_title, c.city, c.state, c.company_type,
       c.employees, c.est_revenue, userName[c.owner_id], c.call_count, c.last_outcome, c.last_called_at,
-      c.next_follow_up_at, c.tags,
+      c.next_follow_up_at, c.trades, c.tags,
       ...pipelines.rows.map((pl) => (stageByPipeline[pl.id] ? pl.stages[stageByPipeline[pl.id]] : '')),
       ...attrs.rows.map((a) => c.custom?.[a.key]),
       c.description,
@@ -154,10 +159,11 @@ router.post('/', async (req, res) => {
   const body = parse(contactSchema, req.body);
   const contact = await tx(async (db) => {
     const { rows } = await db.query(
-      `INSERT INTO contacts (${CORE_FIELDS.join(', ')}, tags, custom, owner_id, next_follow_up_at, created_by)
-       VALUES (${CORE_FIELDS.map((_, i) => `$${i + 1}`).join(', ')}, $13, $14, $15, $16, $17) RETURNING *`,
+      `INSERT INTO contacts (${CORE_FIELDS.join(', ')}, tags, custom, owner_id, next_follow_up_at, created_by, trades)
+       VALUES (${CORE_FIELDS.map((_, i) => `$${i + 1}`).join(', ')}, $13, $14, $15, $16, $17, $18) RETURNING *`,
       [...CORE_FIELDS.map((f) => body[f] ?? null), body.tags || [], body.custom || {},
-        body.owner_id === undefined ? req.user.id : body.owner_id, body.next_follow_up_at ?? null, req.user.id],
+        body.owner_id === undefined ? req.user.id : body.owner_id, body.next_follow_up_at ?? null, req.user.id,
+        body.trades ?? classifyTrades(body)],
     );
     await logActivity(db, { contactId: rows[0].id, userId: req.user.id, type: 'contact.created', data: { name: rows[0].name } });
     return rows[0];
@@ -381,6 +387,8 @@ router.post('/import', async (req, res) => {
         sets.push(`custom = custom || $${params.length}::jsonb`);
         params.push(tags);
         sets.push(`tags = ARRAY(SELECT DISTINCT unnest(tags || $${params.length}::text[]))`);
+        params.push(classifyTrades({ ...data, custom }));
+        sets.push(`trades = CASE WHEN cardinality(trades) = 0 THEN $${params.length}::text[] ELSE trades END`);
         if (ownerId) {
           params.push(ownerId);
           sets.push(`owner_id = $${params.length}`);
@@ -391,9 +399,10 @@ router.post('/import', async (req, res) => {
         out.updated++;
       } else {
         const { rows } = await db.query(
-          `INSERT INTO contacts (${CORE_FIELDS.join(', ')}, tags, custom, owner_id, call_count, created_by)
-           VALUES (${CORE_FIELDS.map((_, j) => `$${j + 1}`).join(', ')}, $13, $14, $15, $16, $17) RETURNING id`,
-          [...CORE_FIELDS.map((f) => data[f]), [...new Set(tags)], custom, ownerId, callCount, req.user.id],
+          `INSERT INTO contacts (${CORE_FIELDS.join(', ')}, tags, custom, owner_id, call_count, created_by, trades)
+           VALUES (${CORE_FIELDS.map((_, j) => `$${j + 1}`).join(', ')}, $13, $14, $15, $16, $17, $18) RETURNING id`,
+          [...CORE_FIELDS.map((f) => data[f]), [...new Set(tags)], custom, ownerId, callCount, req.user.id,
+            classifyTrades({ ...data, custom })],
         );
         contactId = rows[0].id;
         if (normPhone(data.phone)) byPhone.set(normPhone(data.phone), contactId);
