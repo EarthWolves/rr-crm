@@ -77,6 +77,18 @@ test('cold-calling workflow', { skip: !url && 'TEST_DATABASE_URL not set' }, asy
 
   const dash = await call('GET', '/dashboard?days=1');
   assert.equal(dash.body.totals.meetings, 1);
+  assert.equal(dash.body.totals.calls, 1);
+
+  // Dragging a card on the board counts on the leaderboard too: once per lead per day, scored by
+  // the column it ends up in.
+  const beta = list.body.contacts[1];
+  const voicemail = pipelines[0].stages.find((s) => s.name === 'Voicemail Left');
+  assert.equal((await call('PATCH', `/entries/${beta.entries[0].id}`, { stageId: voicemail.id })).status, 200);
+  assert.equal((await call('PATCH', `/entries/${beta.entries[0].id}`, { stageId: meeting.id })).status, 200);
+  const dash2 = (await call('GET', '/dashboard?days=1')).body;
+  assert.deepEqual([dash2.totals.calls, dash2.totals.connects, dash2.totals.meetings, dash2.totals.contacts_called], [2, 2, 2, 2]);
+  assert.deepEqual([dash2.byUser[0].calls, dash2.byUser[0].connects, dash2.byUser[0].meetings], [2, 2, 2]);
+  assert.equal(dash2.daily.at(-1).calls, 2);
 
   // Joining requires the invite code.
   cookie = '';

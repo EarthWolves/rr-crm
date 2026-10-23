@@ -223,7 +223,7 @@ export async function moveEntry(db, entryId, stageId, userId, position) {
       contactId: entry.contact_id,
       userId,
       type: 'stage.changed',
-      data: { pipeline: entry.pipeline_name, from: entry.stage_name, to: target[0].name, toColor: target[0].color },
+      data: { pipeline: entry.pipeline_name, from: entry.stage_name, to: target[0].name, toColor: target[0].color, toStageId: stageId },
     });
   }
   return { entry: updated[0], from: entry.stage_id, changed };

@@ -353,36 +353,71 @@ router.post('/workspace/invite/regenerate', requireAdmin, async (req, res) => {
 
 // ---------- Dashboard & feed ----------
 
+const SINCE = `date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1 - make_interval(days => $2::int - 1)`;
+
+// Every lead a teammate worked, one row per (user, lead, day). Logged calls count as themselves;
+// dragging a card on a board counts as one call too (its column decides whether it was a
+// conversation or a meeting), unless the same user already logged that lead that day.
+// Params: $1 tz, $2 days, $3 connected outcomes.
+const TOUCHES = `
+  WITH logged AS (
+    SELECT user_id, contact_id, date_trunc('day', called_at AT TIME ZONE $1) AS day,
+           count(*) AS calls,
+           count(*) FILTER (WHERE outcome = ANY($3)) AS connects,
+           count(*) FILTER (WHERE outcome = 'meeting_booked') AS meetings
+    FROM calls WHERE called_at >= ${SINCE} GROUP BY 1, 2, 3
+  ),
+  moves AS (
+    SELECT DISTINCT ON (a.user_id, a.contact_id, 3) a.user_id, a.contact_id,
+           date_trunc('day', a.created_at AT TIME ZONE $1) AS day, s.kind, s.name, s.is_first
+    FROM activity a
+    LEFT JOIN LATERAL (
+      SELECT st.kind, st.name, st.position = (SELECT min(position) FROM stages WHERE pipeline_id = st.pipeline_id) AS is_first
+      FROM stages st
+      WHERE CASE WHEN a.data ? 'toStageId' THEN st.id = (a.data->>'toStageId')::uuid
+                 ELSE st.name = a.data->>'to' AND st.pipeline_id IN (SELECT id FROM pipelines WHERE name = a.data->>'pipeline') END
+      LIMIT 1
+    ) s ON true
+    WHERE a.type = 'stage.changed' AND a.user_id IS NOT NULL AND a.contact_id IS NOT NULL AND a.created_at >= ${SINCE}
+    ORDER BY a.user_id, a.contact_id, 3, a.created_at DESC, a.id DESC
+  ),
+  board AS (
+    SELECT user_id, contact_id, day, 1 AS calls,
+           (kind <> 'open' OR name ~* 'connect|follow|call ?back|interested|meeting')::int AS connects,
+           (kind = 'won')::int AS meetings
+    FROM moves WHERE NOT is_first
+  ),
+  touches AS (
+    SELECT user_id, contact_id, day, max(calls)::int AS calls, max(connects)::int AS connects, max(meetings)::int AS meetings
+    FROM (SELECT * FROM logged UNION ALL SELECT * FROM board) t GROUP BY 1, 2, 3
+  )`;
+
 router.get('/dashboard', async (req, res) => {
   const days = Math.min(Math.max(parseInt(req.query.days, 10) || 7, 1), 365);
   const tz = typeof req.query.tz === 'string' && /^[A-Za-z_/+-]{1,64}$/.test(req.query.tz) ? req.query.tz : 'UTC';
-  const since = `date_trunc('day', now() AT TIME ZONE $1) AT TIME ZONE $1 - make_interval(days => $2::int - 1)`;
   const [totals, byUser, byOutcome, daily, followUps, tasks, contacts] = await Promise.all([
     query(
-      `SELECT count(*)::int AS calls,
-              count(*) FILTER (WHERE outcome = ANY($3))::int AS connects,
-              count(*) FILTER (WHERE outcome = 'meeting_booked')::int AS meetings,
-              count(DISTINCT contact_id)::int AS contacts_called
-       FROM calls WHERE called_at >= ${since}`,
+      `${TOUCHES}
+       SELECT coalesce(sum(calls), 0)::int AS calls, coalesce(sum(connects), 0)::int AS connects,
+              coalesce(sum(meetings), 0)::int AS meetings, count(DISTINCT contact_id)::int AS contacts_called
+       FROM touches`,
       [tz, days, CONNECTED],
     ),
     query(
-      `SELECT u.id, u.name, u.color, count(cl.id)::int AS calls,
-              count(cl.id) FILTER (WHERE cl.outcome = ANY($3))::int AS connects,
-              count(cl.id) FILTER (WHERE cl.outcome = 'meeting_booked')::int AS meetings
-       FROM users u LEFT JOIN calls cl ON cl.user_id = u.id AND cl.called_at >= ${since}
+      `${TOUCHES}
+       SELECT u.id, u.name, u.color, coalesce(sum(t.calls), 0)::int AS calls,
+              coalesce(sum(t.connects), 0)::int AS connects, coalesce(sum(t.meetings), 0)::int AS meetings
+       FROM users u LEFT JOIN touches t ON t.user_id = u.id
        GROUP BY u.id ORDER BY calls DESC, u.name`,
       [tz, days, CONNECTED],
     ),
-    query(`SELECT outcome, count(*)::int AS n FROM calls WHERE called_at >= ${since} GROUP BY outcome ORDER BY n DESC`, [tz, days]),
+    query(`SELECT outcome, count(*)::int AS n FROM calls WHERE called_at >= ${SINCE} GROUP BY outcome ORDER BY n DESC`, [tz, days]),
     query(
-      `SELECT to_char(d, 'YYYY-MM-DD') AS day, coalesce(x.n, 0)::int AS calls, coalesce(x.m, 0)::int AS connects
+      `${TOUCHES}
+       SELECT to_char(d, 'YYYY-MM-DD') AS day, coalesce(x.n, 0)::int AS calls, coalesce(x.m, 0)::int AS connects
        FROM generate_series(date_trunc('day', now() AT TIME ZONE $1) - interval '13 days', date_trunc('day', now() AT TIME ZONE $1), interval '1 day') d
-       LEFT JOIN (
-         SELECT date_trunc('day', called_at AT TIME ZONE $1) AS day, count(*) AS n, count(*) FILTER (WHERE outcome = ANY($2)) AS m
-         FROM calls WHERE called_at >= now() - interval '15 days' GROUP BY 1
-       ) x ON x.day = d ORDER BY d`,
-      [tz, CONNECTED],
+       LEFT JOIN (SELECT day, sum(calls) AS n, sum(connects) AS m FROM touches GROUP BY 1) x ON x.day = d ORDER BY d`,
+      [tz, 14, CONNECTED],
     ),
     query(
       `SELECT id, name, phone, next_follow_up_at, owner_id FROM contacts
