@@ -179,22 +179,25 @@ router.delete('/stages/:id', async (req, res) => {
 
 router.post('/pipelines/:id/entries', async (req, res) => {
   const body = parse(z.object({ contactIds: z.array(z.string().uuid()).min(1), stageId: z.string().uuid().optional() }), req.body);
-  const count = await tx(async (db) => {
-    const stageId = body.stageId || (await firstStage(db, req.params.id));
-    const r = await db.query(
-      `INSERT INTO pipeline_entries (pipeline_id, contact_id, stage_id, position)
-       SELECT $1, id, $2, extract(epoch from now()) FROM unnest($3::uuid[]) AS id
-       ON CONFLICT (pipeline_id, contact_id) DO NOTHING RETURNING contact_id`,
-      [req.params.id, stageId, body.contactIds],
-    );
-    const { rows: pl } = await db.query('SELECT name FROM pipelines WHERE id = $1', [req.params.id]);
-    for (const row of r.rows) {
-      await logActivity(db, { contactId: row.contact_id, userId: req.user.id, type: 'pipeline.added', data: { pipeline: pl[0]?.name } });
-    }
-    return r.rowCount;
-  });
+  const count = await tx((db) => addEntries(db, req.params.id, body.contactIds, body.stageId, req.user.id));
   res.status(201).json({ added: count });
 });
+
+// Add contacts to a pipeline (first stage unless one is given), skipping any already on it.
+export async function addEntries(db, pipelineId, contactIds, stageId, userId) {
+  const stage = stageId || (await firstStage(db, pipelineId));
+  const r = await db.query(
+    `INSERT INTO pipeline_entries (pipeline_id, contact_id, stage_id, position)
+     SELECT $1, id, $2, extract(epoch from now()) FROM unnest($3::uuid[]) AS id
+     ON CONFLICT (pipeline_id, contact_id) DO NOTHING RETURNING contact_id`,
+    [pipelineId, stage, contactIds],
+  );
+  const { rows: pl } = await db.query('SELECT name FROM pipelines WHERE id = $1', [pipelineId]);
+  for (const row of r.rows) {
+    await logActivity(db, { contactId: row.contact_id, userId, type: 'pipeline.added', data: { pipeline: pl[0]?.name } });
+  }
+  return r.rowCount;
+}
 
 // Move an entry to another stage. Shared by the board and the call logger.
 export async function moveEntry(db, entryId, stageId, userId, position) {

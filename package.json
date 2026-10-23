@@ -12,10 +12,11 @@
     "dev:client": "npm --prefix client run dev",
     "build": "npm --prefix client install --include=dev && npm --prefix client run build",
     "start": "node server/index.js",
-    "test": "node --test server/test/*.test.js"
+    "test": "node --test --test-concurrency=1 server/test/*.test.js"
   },
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "bcryptjs": "^3.0.3",
     "compression": "^1.8.2",
     "cookie-parser": "^1.4.7",

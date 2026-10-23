@@ -11,6 +11,7 @@ import { HttpError, broadcastOnWrite, sseHandler } from './util.js';
 import { router as contactsRouter } from './routes/contacts.js';
 import { router as pipelinesRouter } from './routes/pipelines.js';
 import { router as activityRouter } from './routes/activity.js';
+import { mcpRouter } from './mcp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,6 +36,7 @@ export function createApp() {
   app.use('/api', api);
 
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
+  app.use('/mcp', mcpRouter);
 
   const dist = path.join(__dirname, '..', 'client', 'dist');
   if (fs.existsSync(dist)) {

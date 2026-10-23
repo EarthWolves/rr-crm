@@ -52,6 +52,23 @@ Any other host with Node 20+ and Postgres works too (Render, Fly.io, a VPS). The
 Set `DATABASE_URL` and run `npm ci && npm run build && npm start`. Managed Postgres providers like Neon or
 Supabase work fine; add `?sslmode=require` to the URL or set `PGSSL=require`.
 
+## Connect Claude (MCP)
+
+The app includes an MCP server at `/mcp` so Claude can work your call loop: find a lead, log the call with
+detailed notes, move it to the right column, and record action items as tasks. It uses the same code as the
+app, so call counts, last outcome, follow-ups, the activity timeline and live updates all behave as if you
+did it in the UI.
+
+1. In Railway, add these variables to the app service and redeploy:
+   - `MCP_TOKEN`: a long random secret, e.g. the output of `openssl rand -hex 32`. MCP is off until it's set.
+   - `MCP_USER_EMAIL` (optional): the CRM user Claude acts as. Defaults to the first admin.
+2. In Claude, add a custom connector with the URL `https://<your-app>/mcp/<MCP_TOKEN>`. Clients that can send
+   headers can use `https://<your-app>/mcp` with `Authorization: Bearer <MCP_TOKEN>` instead. Treat the URL as
+   a password; rotate `MCP_TOKEN` to revoke it.
+
+Tools: `find_leads`, `get_lead`, `list_pipelines`, `log_call`, `add_note`, `move_lead`, `add_action_item`,
+`list_tasks`, `complete_task`, `update_lead`. Nothing deletes data.
+
 ## Local development
 
 ```bash

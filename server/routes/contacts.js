@@ -13,7 +13,7 @@ export const CORE_FIELDS = [
 
 const optStr = z.string().trim().max(10000).nullable().optional().transform((v) => (v === '' ? null : v));
 
-const contactSchema = z.object({
+export const contactSchema = z.object({
   name: z.string().trim().min(1).max(500),
   phone: optStr,
   email: optStr,
@@ -177,42 +177,45 @@ router.get('/:id', async (req, res) => {
   res.json({ contact: rows[0] });
 });
 
+// Update contact fields, merging custom fields and logging what changed. Shared by REST and MCP.
+export async function updateContact(db, contactId, body, userId) {
+  const { rows: before } = await db.query('SELECT * FROM contacts WHERE id = $1 FOR UPDATE', [contactId]);
+  if (!before[0]) throw notFound('Contact');
+  const sets = [];
+  const params = [];
+  const changes = {};
+  for (const [k, v] of Object.entries(body)) {
+    if (k === 'custom') {
+      // Merge custom fields so concurrent edits to different attributes don't clobber each other.
+      params.push(v);
+      sets.push(`custom = custom || $${params.length}::jsonb`);
+      for (const [ck, cv] of Object.entries(v)) {
+        if (JSON.stringify(before[0].custom?.[ck] ?? null) !== JSON.stringify(cv ?? null)) {
+          changes[`custom.${ck}`] = { from: before[0].custom?.[ck] ?? null, to: cv };
+        }
+      }
+      continue;
+    }
+    params.push(v);
+    sets.push(`${k} = $${params.length}`);
+    const prev = before[0][k] instanceof Date ? before[0][k].toISOString() : before[0][k];
+    if (JSON.stringify(prev ?? null) !== JSON.stringify(v ?? null)) changes[k] = { from: prev ?? null, to: v };
+  }
+  if (!sets.length) return before[0];
+  params.push(contactId);
+  const { rows } = await db.query(
+    `UPDATE contacts SET ${sets.join(', ')}, updated_at = now() WHERE id = $${params.length} RETURNING *`,
+    params,
+  );
+  if (Object.keys(changes).length) {
+    await logActivity(db, { contactId: contactId, userId: userId, type: 'contact.updated', data: { changes } });
+  }
+  return rows[0];
+}
+
 router.patch('/:id', async (req, res) => {
   const body = parse(contactSchema.partial(), req.body);
-  const contact = await tx(async (db) => {
-    const { rows: before } = await db.query('SELECT * FROM contacts WHERE id = $1 FOR UPDATE', [req.params.id]);
-    if (!before[0]) throw notFound('Contact');
-    const sets = [];
-    const params = [];
-    const changes = {};
-    for (const [k, v] of Object.entries(body)) {
-      if (k === 'custom') {
-        // Merge custom fields so concurrent edits to different attributes don't clobber each other.
-        params.push(v);
-        sets.push(`custom = custom || $${params.length}::jsonb`);
-        for (const [ck, cv] of Object.entries(v)) {
-          if (JSON.stringify(before[0].custom?.[ck] ?? null) !== JSON.stringify(cv ?? null)) {
-            changes[`custom.${ck}`] = { from: before[0].custom?.[ck] ?? null, to: cv };
-          }
-        }
-        continue;
-      }
-      params.push(v);
-      sets.push(`${k} = $${params.length}`);
-      const prev = before[0][k] instanceof Date ? before[0][k].toISOString() : before[0][k];
-      if (JSON.stringify(prev ?? null) !== JSON.stringify(v ?? null)) changes[k] = { from: prev ?? null, to: v };
-    }
-    if (!sets.length) return before[0];
-    params.push(req.params.id);
-    const { rows } = await db.query(
-      `UPDATE contacts SET ${sets.join(', ')}, updated_at = now() WHERE id = $${params.length} RETURNING *`,
-      params,
-    );
-    if (Object.keys(changes).length) {
-      await logActivity(db, { contactId: req.params.id, userId: req.user.id, type: 'contact.updated', data: { changes } });
-    }
-    return rows[0];
-  });
+  const contact = await tx((db) => updateContact(db, req.params.id, body, req.user.id));
   res.json({ contact });
 });
 

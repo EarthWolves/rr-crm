@@ -26,43 +26,47 @@ const callSchema = z.object({
   followUpAt: dt.nullable().optional(),
 });
 
+// Log a call: insert it, roll up the contact's call stats, optionally move a pipeline entry and
+// create a follow-up task. Shared by the REST route and the MCP server.
+export async function logCall(db, contactId, body, userId) {
+  const { rows: cr } = await db.query('SELECT * FROM contacts WHERE id = $1 FOR UPDATE', [contactId]);
+  const contact = cr[0];
+  if (!contact) throw notFound('Contact');
+  let move = null;
+  if (body.entryId && body.stageId) {
+    const { rows: en } = await db.query('SELECT contact_id FROM pipeline_entries WHERE id = $1', [body.entryId]);
+    if (en[0]?.contact_id !== contact.id) throw new HttpError(400, 'Entry does not belong to this contact');
+    move = await moveEntry(db, body.entryId, body.stageId, userId);
+  }
+  const calledAt = body.calledAt || new Date().toISOString();
+  const { rows } = await db.query(
+    `INSERT INTO calls (contact_id, user_id, outcome, duration_sec, notes, pipeline_id, from_stage_id, to_stage_id, called_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+    [contact.id, userId, body.outcome, body.durationSec ?? null, body.notes || null,
+      move?.entry.pipeline_id ?? null, move?.from ?? null, move?.entry.stage_id ?? null, calledAt],
+  );
+  await db.query(
+    `UPDATE contacts SET call_count = call_count + 1,
+       last_called_at = GREATEST(coalesce(last_called_at, $2::timestamptz), $2::timestamptz),
+       last_outcome = CASE WHEN last_called_at IS NULL OR $2::timestamptz >= last_called_at THEN $3 ELSE last_outcome END,
+       next_follow_up_at = CASE WHEN $4::boolean THEN $5::timestamptz ELSE next_follow_up_at END,
+       updated_at = now()
+     WHERE id = $1`,
+    [contact.id, calledAt, body.outcome, body.followUpAt !== undefined, body.followUpAt ?? null],
+  );
+  if (body.followUpAt) {
+    await db.query(
+      `INSERT INTO tasks (contact_id, title, due_at, assignee_id, created_by) VALUES ($1, $2, $3, $4, $4)`,
+      [contact.id, `Follow up with ${contact.name}`, body.followUpAt, userId],
+    );
+  }
+  await logActivity(db, { contactId: contact.id, userId, type: 'call.logged', data: { outcome: body.outcome, callId: rows[0].id } });
+  return rows[0];
+}
+
 router.post('/contacts/:id/calls', async (req, res) => {
   const body = parse(callSchema, req.body);
-  const call = await tx(async (db) => {
-    const { rows: cr } = await db.query('SELECT * FROM contacts WHERE id = $1 FOR UPDATE', [req.params.id]);
-    const contact = cr[0];
-    if (!contact) throw notFound('Contact');
-    let move = null;
-    if (body.entryId && body.stageId) {
-      const { rows: en } = await db.query('SELECT contact_id FROM pipeline_entries WHERE id = $1', [body.entryId]);
-      if (en[0]?.contact_id !== contact.id) throw new HttpError(400, 'Entry does not belong to this contact');
-      move = await moveEntry(db, body.entryId, body.stageId, req.user.id);
-    }
-    const calledAt = body.calledAt || new Date().toISOString();
-    const { rows } = await db.query(
-      `INSERT INTO calls (contact_id, user_id, outcome, duration_sec, notes, pipeline_id, from_stage_id, to_stage_id, called_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-      [contact.id, req.user.id, body.outcome, body.durationSec ?? null, body.notes || null,
-        move?.entry.pipeline_id ?? null, move?.from ?? null, move?.entry.stage_id ?? null, calledAt],
-    );
-    await db.query(
-      `UPDATE contacts SET call_count = call_count + 1,
-         last_called_at = GREATEST(coalesce(last_called_at, $2::timestamptz), $2::timestamptz),
-         last_outcome = CASE WHEN last_called_at IS NULL OR $2::timestamptz >= last_called_at THEN $3 ELSE last_outcome END,
-         next_follow_up_at = CASE WHEN $4::boolean THEN $5::timestamptz ELSE next_follow_up_at END,
-         updated_at = now()
-       WHERE id = $1`,
-      [contact.id, calledAt, body.outcome, body.followUpAt !== undefined, body.followUpAt ?? null],
-    );
-    if (body.followUpAt) {
-      await db.query(
-        `INSERT INTO tasks (contact_id, title, due_at, assignee_id, created_by) VALUES ($1, $2, $3, $4, $4)`,
-        [contact.id, `Follow up with ${contact.name}`, body.followUpAt, req.user.id],
-      );
-    }
-    await logActivity(db, { contactId: contact.id, userId: req.user.id, type: 'call.logged', data: { outcome: body.outcome, callId: rows[0].id } });
-    return rows[0];
-  });
+  const call = await tx((db) => logCall(db, req.params.id, body, req.user.id));
   res.status(201).json({ call });
 });
 
@@ -141,14 +145,19 @@ router.get('/contacts/:id/notes', async (req, res) => {
   res.json({ notes: rows });
 });
 
+export async function addNote(db, contactId, { body, callId, pinned }, userId) {
+  const { rows } = await db.query(
+    'INSERT INTO notes (contact_id, call_id, user_id, body, pinned) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+    [contactId, callId ?? null, userId, body, pinned ?? false],
+  );
+  await db.query('UPDATE contacts SET updated_at = now() WHERE id = $1', [contactId]);
+  return rows[0];
+}
+
 router.post('/contacts/:id/notes', async (req, res) => {
   const body = parse(z.object({ body: z.string().trim().min(1).max(50000), callId: z.string().uuid().optional() }), req.body);
-  const { rows } = await query(
-    'INSERT INTO notes (contact_id, call_id, user_id, body) VALUES ($1, $2, $3, $4) RETURNING *',
-    [req.params.id, body.callId ?? null, req.user.id, body.body],
-  );
-  await query('UPDATE contacts SET updated_at = now() WHERE id = $1', [req.params.id]);
-  res.status(201).json({ note: rows[0] });
+  const note = await addNote({ query }, req.params.id, body, req.user.id);
+  res.status(201).json({ note });
 });
 
 router.get('/notes', async (req, res) => {
