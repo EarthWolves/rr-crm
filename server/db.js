@@ -217,6 +217,43 @@ const migrations = [
       await createFunnel(c, admin[0]?.id ?? null);
     }
   },
+  // 4: keep the funnel current from the cold-call boards, forward only. When a lead reaches a won column
+  // on another pipeline (e.g. Meeting Booked) its funnel entry moves up to "Call with them"; a conversation
+  // column (Connected, Follow-up, Call back) moves it up to "Identifying ICP". Leads already further along,
+  // or marked as not a fit / customer, are left alone, and nothing happens if those steps were renamed.
+  // Fires after the funnel_sync trigger (triggers run in name order).
+  `
+  CREATE FUNCTION funnel_advance() RETURNS trigger LANGUAGE plpgsql AS $fn$
+  DECLARE
+    src record;
+    target text;
+    moved record;
+  BEGIN
+    SELECT s.kind, s.name INTO src FROM stages s JOIN pipelines p ON p.id = s.pipeline_id
+    WHERE s.id = NEW.stage_id AND p.kind <> 'funnel';
+    IF NOT FOUND THEN RETURN NULL; END IF;
+    IF src.kind = 'won' THEN target := 'call with them';
+    ELSIF src.kind = 'open' AND src.name ~* 'connect|follow|call ?back' THEN target := 'identifying icp';
+    ELSE RETURN NULL;
+    END IF;
+    FOR moved IN
+      UPDATE pipeline_entries fe SET stage_id = t.id, stage_changed_at = now()
+      FROM pipelines fp, stages cur, stages t
+      WHERE fe.contact_id = NEW.contact_id AND fp.id = fe.pipeline_id AND fp.kind = 'funnel'
+        AND cur.id = fe.stage_id AND cur.kind = 'open'
+        AND t.pipeline_id = fp.id AND lower(t.name) = target AND t.kind = 'open' AND t.position > cur.position
+      RETURNING fe.contact_id, fp.name AS pipeline, cur.name AS from_name, t.name AS to_name, t.color, t.id AS to_id
+    LOOP
+      INSERT INTO activity (contact_id, user_id, type, data) VALUES (moved.contact_id, NULL, 'stage.changed',
+        jsonb_build_object('pipeline', moved.pipeline, 'from', moved.from_name, 'to', moved.to_name,
+                           'toColor', moved.color, 'toStageId', moved.to_id, 'auto', true));
+    END LOOP;
+    RETURN NULL;
+  END
+  $fn$;
+  CREATE TRIGGER pipeline_entries_funnel_up AFTER INSERT OR UPDATE OF stage_id ON pipeline_entries
+    FOR EACH ROW EXECUTE FUNCTION funnel_advance();
+  `,
 ];
 
 export async function migrate() {

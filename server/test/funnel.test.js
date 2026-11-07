@@ -96,7 +96,7 @@ test('sales funnel', { skip: !url && 'TEST_DATABASE_URL not set' }, async () => 
 
   // New leads on the cold-call list join the funnel at the first stage, by any route.
   await api('POST', '/contacts/import', { pipelineId: cold.id, rows: [{ name: 'Imported Co', stage: 'Connected' }] });
-  assert.equal(await stageOf(funnel.id, 'Imported Co'), 'Cold calling');
+  assert.equal(await stageOf(funnel.id, 'Imported Co'), 'Identifying ICP'); // joined, then moved up by its Connected column
   const { body: { contact } } = await api('POST', '/contacts', { name: 'Manual Co' });
   await api('POST', `/pipelines/${cold.id}/entries`, { contactIds: [contact.id] });
   assert.equal(await stageOf(funnel.id, 'Manual Co'), 'Cold calling');
@@ -130,10 +130,36 @@ test('sales funnel', { skip: !url && 'TEST_DATABASE_URL not set' }, async () => 
   const dash = (await api('GET', '/dashboard?days=1')).body;
   assert.deepEqual([dash.totals.calls, dash.totals.meetings], [0, 0]);
 
+  // Progress on the cold-call board moves the funnel forward (never back, never out of won/lost).
+  const coldStages = (await api('GET', '/pipelines')).body.pipelines[0].stages;
+  const coldStage = (n) => coldStages.find((s) => s.name === n).id;
+  const coldEntry = async (n) => (await api('GET', `/pipelines/${cold.id}/board`)).body.entries.find((e) => e.name === n).id;
+  const moveCold = async (n, stage) => assert.equal((await api('PATCH', `/entries/${await coldEntry(n)}`, { stageId: coldStage(stage) })).status, 200);
+  await moveCold('Talked Co', 'Meeting Booked');
+  assert.equal(await stageOf(funnel.id, 'Talked Co'), 'Call with them');
+  await moveCold('Fresh Co', 'Connected');
+  assert.equal(await stageOf(funnel.id, 'Fresh Co'), 'Identifying ICP');
+  await moveCold('Rutherford', 'Connected');
+  assert.equal(await stageOf(funnel.id, 'Rutherford'), 'Call with them');
+  await moveCold('Tried Co', 'Meeting Booked');
+  assert.equal(await stageOf(funnel.id, 'Tried Co'), 'Customer');
+  await moveCold('Nope Co', 'Meeting Booked');
+  assert.equal(await stageOf(funnel.id, 'Nope Co'), 'Not a fit');
+  await moveCold('Fresh Co', 'Attempted');
+  assert.equal(await stageOf(funnel.id, 'Fresh Co'), 'Identifying ICP');
+  await api('POST', '/contacts/import', { pipelineId: cold.id, rows: [{ name: 'Booked Co', stage: 'Meeting Booked' }] });
+  assert.equal(await stageOf(funnel.id, 'Booked Co'), 'Call with them');
+  const fresh = (await api('GET', '/contacts?q=Fresh Co')).body.contacts[0];
+  const auto = (await api('GET', `/contacts/${fresh.id}/timeline`)).body.activity.find((a) => a.data.auto);
+  assert.deepEqual([auto.user_id, auto.data.pipeline, auto.data.from, auto.data.to], [null, 'Sales Funnel', 'Cold calling', 'Identifying ICP']);
+  // Only the person's own board moves count on the dashboard, not the automatic funnel moves.
+  const dash3 = (await api('GET', '/dashboard?days=1')).body;
+  assert.equal(dash3.totals.calls, 5);
+
   // Creating another funnel from the UI seeds it the same way.
   const second = await api('POST', '/pipelines', { name: 'Funnel 2', template: 'funnel' });
   assert.equal(second.body.pipeline.kind, 'funnel');
-  assert.equal(await stageOf(second.body.pipeline.id, 'Rutherford'), 'Call with them');
+  assert.equal(await stageOf(second.body.pipeline.id, 'Talked Co'), 'Call with them');
 
   // MCP: moves pick the pipeline that has the column; new leads go on the cold-call list (and so the funnel).
   const client = new Client({ name: 'test', version: '1.0.0' });
@@ -145,7 +171,7 @@ test('sales funnel', { skip: !url && 'TEST_DATABASE_URL not set' }, async () => 
   await api('DELETE', `/pipelines/${second.body.pipeline.id}`);
   const rid = (await run('find_leads', { query: 'Rutherford' })).data.leads[0].id;
   const moved = (await run('move_lead', { lead_id: rid, column: 'Design partner' })).data.lead.columns;
-  assert.deepEqual(moved.map((c) => [c.pipeline, c.stage]).sort(), [['Cold Calls', 'Meeting Booked'], ['Sales Funnel', 'Design partner / pilot']]);
+  assert.deepEqual(moved.map((c) => [c.pipeline, c.stage]).sort(), [['Cold Calls', 'Connected'], ['Sales Funnel', 'Design partner / pilot']]);
   const back = (await run('move_lead', { lead_id: rid, column: 'Follow-up' })).data.lead.columns;
   assert.deepEqual(back.map((c) => [c.pipeline, c.stage]).sort(), [['Cold Calls', 'Follow-up'], ['Sales Funnel', 'Design partner / pilot']]);
   const lead = (await run('create_lead', { name: 'Researched Co', phone: '619-555-0101' })).data.lead;

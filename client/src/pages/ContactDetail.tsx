@@ -407,7 +407,7 @@ function Timeline({ notes, calls, activity }: { notes: Note[]; calls: Call[]; ac
           node: (
             <div className="flex items-center gap-2 px-1 text-xs text-gray-500">
               <span className="flex size-5 items-center justify-center rounded-full bg-gray-100 text-gray-400">{icon}</span>
-              <span className="font-medium text-gray-700">{a.user_name || 'Someone'}</span>
+              <span className="font-medium text-gray-700">{a.user_name || (a.data?.auto ? 'Auto-update' : 'Someone')}</span>
               <span className="min-w-0">{text}</span>
               <span className="ml-auto shrink-0" title={fmtDateTime(a.created_at)}>{timeAgo(a.created_at)}</span>
             </div>

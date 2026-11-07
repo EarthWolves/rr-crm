@@ -18,8 +18,10 @@ Custom CRM made by Rohan Raval.
 - **Sales funnel.** A funnel tab that follows each company from first call to paying customer: Cold calling →
   Identifying ICP → Call with them → Design partner / pilot → Customer (plus Not a fit), with counts and
   step-to-step conversion. Add your own steps anywhere. Every lead put on another pipeline joins the funnel at
-  the first step, and each board card shows (and changes) the lead's funnel step. Funnel moves don't count as
-  calls on the dashboard.
+  the first step, and each board card shows (and changes) the lead's funnel step. Cold-call progress moves the
+  funnel forward on its own: a Connected / Follow-up column lifts a lead to Identifying ICP, Meeting Booked
+  lifts it to Call with them (never backwards, and never out of Customer or Not a fit). Funnel moves don't
+  count as calls on the dashboard.
 - **Call queue (power dialer).** Pick a pipeline, stages and owner, then work through the list one company at
   a time: click-to-call, see the history, pick an outcome (keys 1–8), write notes, move the stage, set a
   follow-up, then **Save & next**. Logging an outcome suggests the matching stage.

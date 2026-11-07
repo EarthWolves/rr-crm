@@ -221,7 +221,7 @@ function FeedRow({ a }: { a: Activity }) {
   return (
     <div className="flex items-start gap-2 px-4 py-2 text-sm">
       <Avatar user={a.user_name ? { name: a.user_name, color: a.user_color || '#999' } : null} size={20} />
-      <div className="min-w-0 flex-1 line-clamp-2"><b className="font-medium">{a.user_name || 'Someone'}</b> {text}</div>
+      <div className="min-w-0 flex-1 line-clamp-2"><b className="font-medium">{a.user_name || (a.data?.auto ? 'Auto-update' : 'Someone')}</b> {text}</div>
       <span className="shrink-0 text-xs text-gray-400" title={fmtDateTime(a.created_at)}>{timeAgo(a.created_at)}</span>
     </div>
   );
