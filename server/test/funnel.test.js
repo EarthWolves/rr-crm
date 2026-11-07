@@ -105,6 +105,17 @@ test('sales funnel', { skip: !url && 'TEST_DATABASE_URL not set' }, async () => 
   await api('POST', `/pipelines/${funnel.id}/entries`, { contactIds: [direct.id] });
   assert.equal(await stageOf(cold.id, 'Direct Co'), null);
 
+  // Cards on the cold-call board carry their funnel step; funnel cards don't point at themselves.
+  const coldBoard = (await api('GET', `/pipelines/${cold.id}/board`)).body.entries;
+  assert.equal(coldBoard.length, 8);
+  const rCard = coldBoard.find((e) => e.name === 'Rutherford');
+  assert.equal(rCard.funnel.pipeline_id, funnel.id);
+  assert.equal(rCard.funnel.stage_id, funnel.stages.find((s) => s.name === 'Call with them').id);
+  assert.ok((await api('GET', `/pipelines/${funnel.id}/board`)).body.entries.every((e) => e.funnel === null));
+  // Logging a call from a contact page still defaults to the cold-call board (it's listed first).
+  const rContact = (await api('GET', '/contacts?q=Rutherford')).body.contacts[0];
+  assert.equal(rContact.entries[0].pipeline_id, cold.id);
+
   // Custom step inserted after a given stage.
   const icp = funnel.stages[1];
   const added = await api('POST', `/pipelines/${funnel.id}/stages`, { name: 'Demo scheduled', after: icp.id });
