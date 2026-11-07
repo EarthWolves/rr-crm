@@ -15,6 +15,11 @@ Custom CRM made by Rohan Raval.
   Gatekeeper → Connected → Follow-up → Meeting Booked / Not Interested) or build your own. You can rename,
   recolor, reorder, add and delete stages. There's a Kanban board with drag and drop plus a table view, and a
   contact can be in several pipelines.
+- **Sales funnel.** A funnel tab that follows each company from first call to paying customer: Cold calling →
+  Identifying ICP → Call with them → Design partner / pilot → Customer (plus Not a fit), with counts and
+  step-to-step conversion. Add your own steps anywhere. Every lead put on another pipeline joins the funnel at
+  the first step, and each board card shows (and changes) the lead's funnel step. Funnel moves don't count as
+  calls on the dashboard.
 - **Call queue (power dialer).** Pick a pipeline, stages and owner, then work through the list one company at
   a time: click-to-call, see the history, pick an outcome (keys 1–8), write notes, move the stage, set a
   follow-up, then **Save & next**. Logging an outcome suggests the matching stage.
@@ -66,8 +71,10 @@ did it in the UI.
    headers can use `https://<your-app>/mcp` with `Authorization: Bearer <MCP_TOKEN>` instead. Treat the URL as
    a password; rotate `MCP_TOKEN` to revoke it.
 
-Tools: `find_leads`, `get_lead`, `list_pipelines`, `log_call`, `add_note`, `move_lead`, `add_action_item`,
-`list_tasks`, `complete_task`, `update_lead`. Nothing deletes data.
+Tools: `find_leads`, `get_lead`, `list_pipelines`, `create_lead`, `log_call`, `add_note`, `move_lead`,
+`add_action_item`, `list_tasks`, `complete_task`, `update_lead`. Nothing deletes data. `create_lead` skips
+companies that already exist (same name, phone or website). `move_lead` works on the funnel too; with no
+pipeline named it uses the one that has the column you asked for.
 
 ## Local development
 

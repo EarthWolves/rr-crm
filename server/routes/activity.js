@@ -373,7 +373,7 @@ const TOUCHES = `
     FROM activity a
     LEFT JOIN LATERAL (
       SELECT st.kind, st.name, st.position = (SELECT min(position) FROM stages WHERE pipeline_id = st.pipeline_id) AS is_first
-      FROM stages st
+      FROM stages st JOIN pipelines pl ON pl.id = st.pipeline_id AND pl.kind <> 'funnel' -- funnel moves are not calls
       WHERE CASE WHEN a.data ? 'toStageId' THEN st.id = (a.data->>'toStageId')::uuid
                  ELSE st.name = a.data->>'to' AND st.pipeline_id IN (SELECT id FROM pipelines WHERE name = a.data->>'pipeline') END
       LIMIT 1

@@ -190,6 +190,33 @@ const migrations = [
       if (trades.length) await c.query('UPDATE contacts SET trades = $1 WHERE id = $2', [trades, row.id]);
     }
   },
+  // 3: sales funnel. Pipelines get a kind ('board' or 'funnel'). A funnel automatically includes every
+  // lead that is put on any other pipeline, at its first stage. Existing installs get a "Sales Funnel"
+  // seeded from where leads stand on their other pipelines; nothing on those pipelines changes.
+  async (c) => {
+    await c.query(`ALTER TABLE pipelines ADD COLUMN kind text NOT NULL DEFAULT 'board'`);
+    await c.query(`
+      CREATE FUNCTION funnel_sync() RETURNS trigger LANGUAGE plpgsql AS $fn$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pipelines WHERE id = NEW.pipeline_id AND kind = 'funnel') THEN RETURN NULL; END IF;
+        INSERT INTO pipeline_entries (pipeline_id, contact_id, stage_id, position)
+        SELECT p.id, NEW.contact_id, s.id, NEW.position
+        FROM pipelines p
+        JOIN LATERAL (SELECT id FROM stages WHERE pipeline_id = p.id ORDER BY position LIMIT 1) s ON true
+        WHERE p.kind = 'funnel'
+        ON CONFLICT (pipeline_id, contact_id) DO NOTHING;
+        RETURN NULL;
+      END
+      $fn$`);
+    await c.query(`CREATE TRIGGER pipeline_entries_funnel_sync AFTER INSERT ON pipeline_entries
+      FOR EACH ROW EXECUTE FUNCTION funnel_sync()`);
+    const { rows } = await c.query('SELECT count(*)::int AS n FROM pipeline_entries');
+    if (rows[0].n > 0) {
+      const { createFunnel } = await import('./routes/pipelines.js');
+      const { rows: admin } = await c.query(`SELECT id FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1`);
+      await createFunnel(c, admin[0]?.id ?? null);
+    }
+  },
 ];
 
 export async function migrate() {

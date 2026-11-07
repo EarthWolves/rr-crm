@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
-  CheckSquare, Columns3, Home, LogOut, Menu as MenuIcon, PhoneCall, PhoneOutgoing, Settings, Upload, Users, X,
+  CheckSquare, Columns3, Funnel, Home, LogOut, Menu as MenuIcon, PhoneCall, PhoneOutgoing, Settings, Upload, Users, X,
 } from 'lucide-react';
 import { api } from '../api';
 import { useLiveUpdates, useMe, usePipelines } from '../hooks';
@@ -11,6 +11,7 @@ import { Avatar } from './ui';
 
 const nav = [
   { to: '/', label: 'Home', icon: Home, end: true },
+  { to: '/funnel', label: 'Sales funnel', icon: Funnel },
   { to: '/dialer', label: 'Call queue', icon: PhoneOutgoing },
   { to: '/contacts', label: 'Contacts', icon: Users },
   { to: '/tasks', label: 'Tasks', icon: CheckSquare },

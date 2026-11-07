@@ -30,7 +30,7 @@ export type Contact = {
 };
 
 export type Stage = { id: string; pipeline_id: string; name: string; color: string; kind: 'open' | 'won' | 'lost'; position: number; count: number };
-export type Pipeline = { id: string; name: string; description: string | null; stages: Stage[]; entry_count: number };
+export type Pipeline = { id: string; name: string; description: string | null; kind: 'board' | 'funnel'; stages: Stage[]; entry_count: number };
 
 export type BoardEntry = {
   id: string;
@@ -54,6 +54,7 @@ export type BoardEntry = {
   trades: string[];
   note_count: number;
   last_note: string | null;
+  funnel: { entry_id: string; pipeline_id: string; stage_id: string } | null;
 };
 
 export type Call = {

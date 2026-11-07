@@ -13,6 +13,7 @@ import Contacts from './pages/Contacts';
 import ContactDetail from './pages/ContactDetail';
 import Pipelines from './pages/Pipelines';
 import PipelineBoard from './pages/PipelineBoard';
+import Funnel from './pages/Funnel';
 import CallQueue from './pages/CallQueue';
 import Import from './pages/Import';
 import Tasks from './pages/Tasks';
@@ -49,6 +50,7 @@ function App() {
         <Route index element={<Dashboard />} />
         <Route path="contacts" element={<Contacts />} />
         <Route path="contacts/:id" element={<ContactDetail />} />
+        <Route path="funnel" element={<Funnel />} />
         <Route path="pipelines" element={<Pipelines />} />
         <Route path="pipelines/:id" element={<PipelineBoard />} />
         <Route path="dialer" element={<CallQueue />} />

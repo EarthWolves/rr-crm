@@ -27,7 +27,39 @@ export const TEMPLATES = {
     { name: 'Lost', color: '#f87171', kind: 'lost' },
   ],
   blank: [{ name: 'New', color: '#94a3b8' }],
+  funnel: [
+    { name: 'Cold calling', color: '#94a3b8' },
+    { name: 'Identifying ICP', color: '#60a5fa' },
+    { name: 'Call with them', color: '#a78bfa' },
+    { name: 'Design partner / pilot', color: '#fbbf24' },
+    { name: 'Customer', color: '#34d399', kind: 'won' },
+    { name: 'Not a fit', color: '#f87171', kind: 'lost' },
+  ],
 };
+
+// Create a sales funnel and place every lead already on another pipeline by how far it got there:
+// a won column (e.g. Meeting Booked) -> "Call with them", a conversation column (Connected, Follow-up,
+// Call back) -> "Identifying ICP", a lost column -> "Not a fit", anything else -> "Cold calling".
+export async function createFunnel(db, userId, name = 'Sales Funnel', description = null) {
+  const pipeline = await createPipeline(db, { name, description, template: 'funnel' }, userId);
+  const { rows: st } = await db.query('SELECT id, kind FROM stages WHERE pipeline_id = $1 ORDER BY position', [pipeline.id]);
+  const open = st.filter((s) => s.kind !== 'lost');
+  const lost = st.find((s) => s.kind === 'lost');
+  await db.query(
+    `INSERT INTO pipeline_entries (pipeline_id, contact_id, stage_id, position, stage_changed_at)
+     SELECT $1, x.contact_id, ($2::uuid[])[x.rank + 1], extract(epoch from now()), x.changed
+     FROM (
+       SELECT e.contact_id, max(CASE WHEN s.kind = 'won' THEN 3 WHEN s.kind = 'lost' THEN 0
+                                     WHEN s.name ~* 'connect|follow|call ?back' THEN 2 ELSE 1 END) AS rank,
+              max(e.stage_changed_at) AS changed
+       FROM pipeline_entries e JOIN stages s ON s.id = e.stage_id JOIN pipelines p ON p.id = e.pipeline_id
+       WHERE p.kind <> 'funnel' GROUP BY e.contact_id
+     ) x
+     ON CONFLICT (pipeline_id, contact_id) DO NOTHING`,
+    [pipeline.id, [lost.id, open[0].id, open[1].id, open[2].id]],
+  );
+  return pipeline;
+}
 
 const stageInput = z.object({
   name: z.string().trim().min(1).max(200),
@@ -38,15 +70,15 @@ const stageInput = z.object({
 const pipelineSchema = z.object({
   name: z.string().trim().min(1).max(200),
   description: z.string().trim().max(2000).nullable().optional(),
-  template: z.enum(['cold_call', 'sales', 'blank']).optional(),
+  template: z.enum(['cold_call', 'sales', 'blank', 'funnel']).optional(),
   stages: z.array(stageInput).max(50).optional(),
 });
 
 export async function createPipeline(db, { name, description, template, stages }, userId) {
   const { rows: pos } = await db.query('SELECT coalesce(max(position), -1) + 1 AS p FROM pipelines');
   const { rows } = await db.query(
-    'INSERT INTO pipelines (name, description, position, created_by) VALUES ($1, $2, $3, $4) RETURNING *',
-    [name, description ?? null, pos[0].p, userId],
+    'INSERT INTO pipelines (name, description, position, created_by, kind) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+    [name, description ?? null, pos[0].p, userId, template === 'funnel' ? 'funnel' : 'board'],
   );
   const list = stages?.length ? stages : TEMPLATES[template || 'cold_call'];
   for (let i = 0; i < list.length; i++) {
@@ -71,7 +103,9 @@ router.get('/pipelines', async (req, res) => {
 
 router.post('/pipelines', async (req, res) => {
   const body = parse(pipelineSchema, req.body);
-  const pipeline = await tx((db) => createPipeline(db, body, req.user.id));
+  const pipeline = await tx((db) => (body.template === 'funnel' && !body.stages?.length
+    ? createFunnel(db, req.user.id, body.name, body.description)
+    : createPipeline(db, body, req.user.id)));
   res.status(201).json({ pipeline });
 });
 
@@ -117,7 +151,11 @@ router.get('/pipelines/:id/board', async (req, res) => {
             c.name, c.phone, c.website, c.city, c.state, c.owner_id, c.call_count, c.last_outcome,
             c.last_called_at, c.next_follow_up_at, c.tags, c.employees, c.est_revenue, c.trades,
             (SELECT count(*)::int FROM notes n WHERE n.contact_id = c.id) AS note_count,
-            (SELECT left(n.body, 200) FROM notes n WHERE n.contact_id = c.id ORDER BY n.pinned DESC, n.created_at DESC LIMIT 1) AS last_note
+            (SELECT left(n.body, 200) FROM notes n WHERE n.contact_id = c.id ORDER BY n.pinned DESC, n.created_at DESC LIMIT 1) AS last_note,
+            (SELECT json_build_object('entry_id', fe.id, 'pipeline_id', fe.pipeline_id, 'stage_id', fe.stage_id)
+             FROM pipeline_entries fe JOIN pipelines fp ON fp.id = fe.pipeline_id AND fp.kind = 'funnel'
+             WHERE fe.contact_id = c.id AND fe.pipeline_id <> e.pipeline_id
+             ORDER BY fp.position, fp.created_at LIMIT 1) AS funnel
      FROM pipeline_entries e JOIN contacts c ON c.id = e.contact_id
      WHERE ${where.join(' AND ')}
      ORDER BY e.position, c.name`,
@@ -128,14 +166,27 @@ router.get('/pipelines/:id/board', async (req, res) => {
 
 // ---------- Stages ----------
 
+// Add a stage at the end, or right after another stage ("after": stage id).
 router.post('/pipelines/:id/stages', async (req, res) => {
-  const body = parse(stageInput, req.body);
-  const { rows: pos } = await query('SELECT coalesce(max(position), -1) + 1 AS p FROM stages WHERE pipeline_id = $1', [req.params.id]);
-  const { rows } = await query(
-    'INSERT INTO stages (pipeline_id, name, color, kind, position) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-    [req.params.id, body.name, body.color || '#94a3b8', body.kind || 'open', pos[0].p],
-  );
-  res.status(201).json({ stage: rows[0] });
+  const body = parse(stageInput.extend({ after: z.string().uuid().optional() }), req.body);
+  const stage = await tx(async (db) => {
+    let position;
+    if (body.after) {
+      const { rows: prev } = await db.query('SELECT position FROM stages WHERE id = $1 AND pipeline_id = $2', [body.after, req.params.id]);
+      if (!prev[0]) throw new HttpError(400, 'Stage to insert after is not on this pipeline');
+      position = prev[0].position + 1;
+      await db.query('UPDATE stages SET position = position + 1 WHERE pipeline_id = $1 AND position >= $2', [req.params.id, position]);
+    } else {
+      const { rows: pos } = await db.query('SELECT coalesce(max(position), -1) + 1 AS p FROM stages WHERE pipeline_id = $1', [req.params.id]);
+      position = pos[0].p;
+    }
+    const { rows } = await db.query(
+      'INSERT INTO stages (pipeline_id, name, color, kind, position) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [req.params.id, body.name, body.color || '#94a3b8', body.kind || 'open', position],
+    );
+    return rows[0];
+  });
+  res.status(201).json({ stage });
 });
 
 router.put('/pipelines/:id/stage-order', async (req, res) => {

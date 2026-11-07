@@ -60,6 +60,7 @@ function PipelineCard({ p }: { p: Pipeline }) {
 const TEMPLATE_INFO = {
   cold_call: { label: 'Cold calling', stages: 'Not Contacted → Attempted → Voicemail Left → Gatekeeper → Connected → Follow-up → Meeting Booked / Not Interested' },
   sales: { label: 'Sales deals', stages: 'Lead → Qualified → Discovery → Proposal → Negotiation → Won / Lost' },
+  funnel: { label: 'Sales funnel', stages: 'Cold calling → Identifying ICP → Call with them → Design partner / pilot → Customer / Not a fit. Existing leads are placed by how far they got.' },
   blank: { label: 'Blank', stages: 'Start with one stage and build your own' },
 };
 
@@ -88,7 +89,7 @@ export function CreatePipelineModal({ open, onClose, onCreated }: { open: boolea
           <div className="label">Start from</div>
           <div className="space-y-2">
             {(Object.keys(TEMPLATE_INFO) as (keyof typeof TEMPLATE_INFO)[]).map((k) => (
-              <button key={k} onClick={() => setTemplate(k)} className={clsx('w-full rounded-lg border p-3 text-left transition', template === k ? 'border-indigo-400 bg-indigo-50/50 ring-2 ring-indigo-100' : 'border-gray-200 hover:bg-gray-50')}>
+              <button key={k} onClick={() => { setTemplate(k); if (k === 'funnel' && name === 'Cold Calls') setName('Sales Funnel'); }} className={clsx('w-full rounded-lg border p-3 text-left transition', template === k ? 'border-indigo-400 bg-indigo-50/50 ring-2 ring-indigo-100' : 'border-gray-200 hover:bg-gray-50')}>
                 <div className="text-sm font-medium">{TEMPLATE_INFO[k].label}</div>
                 <div className="mt-0.5 text-xs text-gray-500">{TEMPLATE_INFO[k].stages}</div>
               </button>

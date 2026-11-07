@@ -41,7 +41,7 @@ const pipelineHint = 'Pipeline name or id. Optional when the lead is on exactly 
 const LEAD_COLUMNS = `c.id, c.name, c.phone, c.email, c.website, c.contact_person, c.contact_title, c.city, c.state,
   c.company_type, c.trades, c.tags, c.call_count, c.last_called_at, c.last_outcome, c.next_follow_up_at,
   (SELECT u.name FROM users u WHERE u.id = c.owner_id) AS owner,
-  COALESCE((SELECT json_agg(json_build_object('entry_id', e.id, 'pipeline', p.name, 'pipeline_id', p.id, 'stage', s.name))
+  COALESCE((SELECT json_agg(json_build_object('entry_id', e.id, 'pipeline', p.name, 'pipeline_id', p.id, 'stage', s.name) ORDER BY p.position, p.created_at)
     FROM pipeline_entries e JOIN pipelines p ON p.id = e.pipeline_id JOIN stages s ON s.id = e.stage_id
     WHERE e.contact_id = c.id), '[]') AS columns`;
 
@@ -182,7 +182,7 @@ export function buildServer(user) {
     {},
     async (db) => {
       const { rows } = await db.query(`
-        SELECT p.id, p.name, COALESCE((SELECT json_agg(json_build_object('name', s.name, 'kind', s.kind,
+        SELECT p.id, p.name, p.kind, COALESCE((SELECT json_agg(json_build_object('name', s.name, 'kind', s.kind,
           'leads', (SELECT count(*)::int FROM pipeline_entries e WHERE e.stage_id = s.id)) ORDER BY s.position)
           FROM stages s WHERE s.pipeline_id = p.id), '[]') AS columns
         FROM pipelines p ORDER BY p.position, p.created_at`);
@@ -229,7 +229,7 @@ export function buildServer(user) {
 
   tool(
     'move_lead',
-    'Move a lead to a column on a pipeline board. Adds the lead to the pipeline first if it is not on it.',
+    'Move a lead to a column on a pipeline board, e.g. a Cold Calls column or a Sales Funnel stage (Cold calling, Identifying ICP, Call with them, Design partner / pilot, Customer, Not a fit). Adds the lead to the pipeline first if it is not on it. With no pipeline named, the pipeline that has that column is used.',
     { lead_id: leadId, column: z.string().trim().min(1).describe(stageHint), pipeline: z.string().trim().min(1).optional().describe(pipelineHint) },
     async (db, { lead_id, column, pipeline }) => {
       await assertLead(db, lead_id);
@@ -329,7 +329,7 @@ export function buildServer(user) {
       est_revenue: text,
       trades: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
       note: z.string().trim().max(50000).optional().describe('A first note on the lead, e.g. research findings, estimators found and sources'),
-      pipeline: z.string().trim().min(1).optional().describe('Pipeline name or id; defaults to the first pipeline'),
+      pipeline: z.string().trim().min(1).optional().describe('Pipeline name or id; defaults to the first pipeline that is not a funnel (the cold-call list)'),
       column: z.string().trim().min(1).optional().describe('Column to place the lead in; defaults to the first column'),
       add_to_pipeline: z.boolean().optional(),
       allow_duplicate: z.boolean().optional(),
@@ -362,7 +362,7 @@ export function buildServer(user) {
       const contact = await createContact(db, body, user.id);
       if (note) await addNote(db, contact.id, { body: note }, user.id);
       if (add_to_pipeline !== false) {
-        const { rows: pipelines } = await db.query('SELECT id, name FROM pipelines ORDER BY position, created_at');
+        const { rows: pipelines } = await db.query(`SELECT id, name FROM pipelines ORDER BY (kind = 'funnel'), position, created_at`);
         if (pipeline || pipelines.length) {
           const p = pipeline ? pick(pipelines, pipeline, 'pipeline') : pipelines[0];
           const { rows: stages } = await db.query('SELECT id, name FROM stages WHERE pipeline_id = $1 ORDER BY position', [p.id]);

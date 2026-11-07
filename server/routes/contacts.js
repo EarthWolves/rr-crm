@@ -48,8 +48,9 @@ const SORTS = {
 };
 
 const ENTRIES_JSON = `COALESCE((
-  SELECT json_agg(json_build_object('id', e.id, 'pipeline_id', e.pipeline_id, 'stage_id', e.stage_id))
-  FROM pipeline_entries e WHERE e.contact_id = c.id
+  SELECT json_agg(json_build_object('id', e.id, 'pipeline_id', e.pipeline_id, 'stage_id', e.stage_id)
+                  ORDER BY (p.kind = 'funnel'), p.position, p.created_at)
+  FROM pipeline_entries e JOIN pipelines p ON p.id = e.pipeline_id WHERE e.contact_id = c.id
 ), '[]') AS entries`;
 
 // Builds the WHERE clause shared by listing and export.

@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Columns3, Globe, List, MessageSquare, Phone, PhoneCall, PhoneOutgoing, Plus, Search, Settings2 } from 'lucide-react';
-import { api, qs, type BoardEntry, type Contact, type User } from '../api';
+import { Columns3, Funnel, Globe, List, MessageSquare, Phone, PhoneCall, PhoneOutgoing, Plus, Search, Settings2 } from 'lucide-react';
+import { api, qs, type BoardEntry, type Contact, type Pipeline, type User } from '../api';
 import { usePipelines, useUsers } from '../hooks';
 import { fmtDate, isOverdue, outcomeOf, prettySite, siteHref, telHref, timeAgo } from '../lib';
 import { Avatar, Button, EmptyState, Modal, PageHeader, PageLoader, Pill } from '../components/ui';
@@ -18,6 +18,7 @@ export default function PipelineBoard() {
   const { pipelines, isLoading } = usePipelines();
   const { users, byId } = useUsers();
   const pipeline = pipelines.find((p) => p.id === id);
+  const funnel = pipelines.find((p) => p.kind === 'funnel' && p.id !== id);
   const [view, setView] = useState<'board' | 'table'>(() => (localStorage.getItem('boardView') as 'board' | 'table') || 'board');
   const [owner, setOwner] = useState('');
   const [state, setState] = useState('');
@@ -122,6 +123,7 @@ export default function PipelineBoard() {
                       key={e.id}
                       e={e}
                       users={users}
+                      funnel={funnel}
                       onOpen={() => navigate(`/contacts/${e.contact_id}`)}
                       onLogCall={() => setLogFor(e)}
                     />
@@ -231,9 +233,29 @@ function AddRecordsModal({ open, onClose, pipelineId, stages }: { open: boolean;
   );
 }
 
-function BoardCard({ e, users, onOpen, onLogCall }: {
+// The lead's stage on the sales funnel, changeable right from a card on another board.
+function FunnelStagePicker({ funnel, entryId, stageId }: { funnel: Pipeline; entryId: string; stageId: string }) {
+  const move = useMutation({ mutationFn: (to: string) => api.patch(`/entries/${entryId}`, { stageId: to }) });
+  const stage = funnel.stages.find((s) => s.id === stageId);
+  return (
+    <label className="mt-2 flex cursor-pointer items-center gap-1.5 rounded-md border border-gray-200 px-2 py-1 text-xs hover:bg-gray-50" title={`Stage on ${funnel.name}`} onClick={(ev) => ev.stopPropagation()}>
+      <Funnel className="size-3 shrink-0 text-gray-400" />
+      <span className="size-2 shrink-0 rounded-full" style={{ background: stage?.color }} />
+      <select
+        className="min-w-0 flex-1 cursor-pointer appearance-none truncate bg-transparent text-gray-700 outline-none"
+        value={stageId}
+        onChange={(ev) => move.mutate(ev.target.value)}
+      >
+        {funnel.stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function BoardCard({ e, users, funnel, onOpen, onLogCall }: {
   e: BoardEntry;
   users: User[];
+  funnel?: Pipeline;
   onOpen: () => void;
   onLogCall: () => void;
 }) {
@@ -288,6 +310,7 @@ function BoardCard({ e, users, onOpen, onLogCall }: {
           {e.next_follow_up_at && <span className={clsx(isOverdue(e.next_follow_up_at) && 'font-medium text-red-600')}>↻ {fmtDate(e.next_follow_up_at)}</span>}
         </div>
       )}
+      {funnel && e.funnel && <FunnelStagePicker funnel={funnel} entryId={e.funnel.entry_id} stageId={e.funnel.stage_id} />}
 
       {/* Notes: fixed-size boxes so nothing moves while you type. */}
       <div className="mt-2 cursor-default" onClick={stop}>
