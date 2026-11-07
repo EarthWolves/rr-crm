@@ -65,7 +65,7 @@ test('mcp call loop', { skip: !url && 'TEST_DATABASE_URL not set' }, async () =>
   const client = await connect('/mcp/test-token-123');
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map((t) => t.name).sort(), [
-    'add_action_item', 'add_note', 'complete_task', 'find_leads', 'get_lead', 'list_pipelines', 'list_tasks', 'log_call', 'move_lead', 'update_lead',
+    'add_action_item', 'add_note', 'complete_task', 'create_lead', 'find_leads', 'get_lead', 'list_pipelines', 'list_tasks', 'log_call', 'move_lead', 'update_lead',
   ]);
   const header = await connect('/mcp', { Authorization: 'Bearer test-token-123' });
   assert.equal((await run(header, 'list_pipelines')).data.pipelines[0].name, 'Cold Calls');
@@ -116,6 +116,35 @@ test('mcp call loop', { skip: !url && 'TEST_DATABASE_URL not set' }, async () =>
   const { contact } = await api('POST', '/contacts', { name: 'Loose Lead' });
   const moved = await run(client, 'move_lead', { lead_id: contact.id, column: 'Voicemail Left' });
   assert.equal(moved.data.lead.columns[0].stage, 'Voicemail Left');
+
+  // create_lead: lands in the first column of the cold-call list, with trades, owner and a note.
+  const created = await run(client, 'create_lead', {
+    name: 'Pacific Coast Drywall', phone: '(858) 555-0100', website: 'https://www.pcdrywall.com/about',
+    email: 'est@pcdrywall.com', contact_person: 'Dana Lee', contact_title: 'Chief Estimator', city: 'San Diego', state: 'CA',
+    trades: ['drywall / framing'], tags: ['researched'], employees: '45', description: '4 estimators',
+    note: 'Found on their careers page.',
+  });
+  assert.equal(created.error, null);
+  assert.equal(created.data.created, true);
+  const nl = created.data.lead;
+  assert.deepEqual([nl.columns[0].pipeline, nl.columns[0].stage, nl.owner], ['Cold Calls', 'Not Contacted', 'Ro']);
+  assert.deepEqual(nl.trades, ['Drywall / Framing']);
+  assert.deepEqual(nl.tags, ['researched']);
+  assert.equal((await run(client, 'get_lead', { lead_id: nl.id })).data.notes[0].body, 'Found on their careers page.');
+
+  // Same phone in another format, or same website: no duplicate.
+  const dupe = await run(client, 'create_lead', { name: 'PCD Inc', phone: '858.555.0100' });
+  assert.equal(dupe.data.created, false);
+  assert.equal(dupe.data.existing[0].id, nl.id);
+  assert.equal((await run(client, 'create_lead', { name: 'Other', website: 'pcdrywall.com' })).data.created, false);
+  assert.equal((await run(client, 'create_lead', { name: 'PCD Inc', phone: '858.555.0100', allow_duplicate: true })).data.created, true);
+
+  // A chosen column, or no pipeline at all; bad column names are refused and nothing is created.
+  const placed = await run(client, 'create_lead', { name: 'Hot Lead', column: 'meeting booked' });
+  assert.equal(placed.data.lead.columns[0].stage, 'Meeting Booked');
+  assert.equal((await run(client, 'create_lead', { name: 'Loose 2', add_to_pipeline: false })).data.lead.columns.length, 0);
+  assert.match((await run(client, 'create_lead', { name: 'Bad Col', column: 'Nope' })).error, /Options:/);
+  assert.equal((await run(client, 'find_leads', { query: 'Bad Col' })).data.count, 0);
 
   assert.match((await run(client, 'get_lead', { lead_id: '00000000-0000-0000-0000-000000000000' })).error, /not found/);
   await client.close();

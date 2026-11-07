@@ -9,10 +9,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { query, tx } from './db.js';
-import { HttpError, broadcast, notFound } from './util.js';
+import { HttpError, broadcast, notFound, parse } from './util.js';
 import { OUTCOMES, addNote, logCall } from './routes/activity.js';
 import { addEntries, moveEntry } from './routes/pipelines.js';
-import { contactSchema, updateContact } from './routes/contacts.js';
+import { contactSchema, createContact, normPhone, normSite, updateContact } from './routes/contacts.js';
+import { TRADE_NAMES } from './trades.js';
 
 const digest = (s) => crypto.createHash('sha256').update(String(s)).digest();
 
@@ -69,9 +70,30 @@ async function resolvePipeline(db, contactId, pipeline) {
   throw new HttpError(400, `Say which pipeline: ${among.map((p) => p.name).join(', ')}`);
 }
 
+// With no pipeline named and the lead on several, use the one pipeline that has a column matching
+// the name (e.g. "Meeting Booked" is only on Cold Calls, "Customer" only on the Sales Funnel).
+async function pipelineByColumn(db, contactId, stage) {
+  const { rows: on } = await db.query(
+    'SELECT p.id, p.name FROM pipeline_entries e JOIN pipelines p ON p.id = e.pipeline_id WHERE e.contact_id = $1',
+    [contactId],
+  );
+  if (on.length < 2) return null;
+  const w = String(stage).trim().toLowerCase();
+  const matches = [];
+  for (const p of on) {
+    const { rows: stages } = await db.query('SELECT name FROM stages WHERE pipeline_id = $1', [p.id]);
+    const exact = stages.some((s) => s.name.toLowerCase() === w);
+    const partial = stages.filter((s) => s.name.toLowerCase().includes(w)).length === 1;
+    if (exact || partial) matches.push({ p, exact });
+  }
+  const exact = matches.filter((m) => m.exact);
+  if (exact.length === 1) return exact[0].p;
+  return matches.length === 1 ? matches[0].p : null;
+}
+
 // Find (or create, at the first column) the lead's entry on a pipeline and resolve the target column.
 async function resolveMove(db, contactId, stage, pipeline, userId) {
-  const p = await resolvePipeline(db, contactId, pipeline);
+  const p = (!pipeline && (await pipelineByColumn(db, contactId, stage))) || (await resolvePipeline(db, contactId, pipeline));
   const { rows: stages } = await db.query('SELECT id, name FROM stages WHERE pipeline_id = $1 ORDER BY position', [p.id]);
   const target = pick(stages, stage, `column on ${p.name}`);
   let { rows: entry } = await db.query('SELECT id FROM pipeline_entries WHERE pipeline_id = $1 AND contact_id = $2', [p.id, contactId]);
@@ -292,6 +314,63 @@ export function buildServer(user) {
       if (!Object.keys(fields).length) throw new HttpError(400, 'Nothing to update');
       await updateContact(db, lead_id, contactSchema.partial().parse(fields), user.id);
       return { lead: await leadSummary(db, lead_id) };
+    },
+    { write: true },
+  );
+
+  tool(
+    'create_lead',
+    `Add a new lead (a company) to the CRM, e.g. from research. First checks for a lead with the same phone, website or name and returns it instead of creating a duplicate (allow_duplicate: true creates anyway). The lead is owned by the CRM user and placed on a pipeline: the given pipeline and column, or by default the first column of the cold-call list (the first pipeline). add_to_pipeline: false skips that. Trades are detected from the name and description when not given. Known trades: ${TRADE_NAMES.join(', ')}.`,
+    {
+      name: z.string().trim().min(1).max(500).describe('Company name'),
+      ...editable,
+      company_type: text,
+      employees: text.describe('Headcount, e.g. "25" or "10-50"'),
+      est_revenue: text,
+      trades: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+      note: z.string().trim().max(50000).optional().describe('A first note on the lead, e.g. research findings, estimators found and sources'),
+      pipeline: z.string().trim().min(1).optional().describe('Pipeline name or id; defaults to the first pipeline'),
+      column: z.string().trim().min(1).optional().describe('Column to place the lead in; defaults to the first column'),
+      add_to_pipeline: z.boolean().optional(),
+      allow_duplicate: z.boolean().optional(),
+    },
+    async (db, { note, pipeline, column, add_to_pipeline, allow_duplicate, trades, ...fields }) => {
+      if (!allow_duplicate) {
+        const phone = normPhone(fields.phone).slice(-10);
+        const site = normSite(fields.website).split('/')[0];
+        const { rows } = await db.query(
+          `SELECT id, name, phone, website FROM contacts
+           WHERE lower(name) = lower($1)
+              OR ($2 <> '' AND right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = $2)
+              OR ($3 <> '' AND website ILIKE '%' || $3 || '%')
+           LIMIT 5`,
+          [fields.name, phone.length >= 7 ? phone : '', site],
+        );
+        const dupes = rows.filter((r) => r.name.toLowerCase() === fields.name.toLowerCase()
+          || (phone.length >= 7 && normPhone(r.phone).slice(-10) === phone)
+          || (site && normSite(r.website).split('/')[0] === site));
+        if (dupes.length) {
+          return {
+            created: false,
+            message: 'A lead with the same name, phone or website already exists; nothing was created. Use update_lead to add details, or allow_duplicate: true.',
+            existing: await Promise.all(dupes.map((d) => leadSummary(db, d.id))),
+          };
+        }
+      }
+      const known = (t) => TRADE_NAMES.find((n) => n.toLowerCase() === t.toLowerCase()) || t;
+      const body = parse(contactSchema, { ...fields, ...(trades?.length ? { trades: [...new Set(trades.map(known))] } : {}) });
+      const contact = await createContact(db, body, user.id);
+      if (note) await addNote(db, contact.id, { body: note }, user.id);
+      if (add_to_pipeline !== false) {
+        const { rows: pipelines } = await db.query('SELECT id, name FROM pipelines ORDER BY position, created_at');
+        if (pipeline || pipelines.length) {
+          const p = pipeline ? pick(pipelines, pipeline, 'pipeline') : pipelines[0];
+          const { rows: stages } = await db.query('SELECT id, name FROM stages WHERE pipeline_id = $1 ORDER BY position', [p.id]);
+          const stage = column ? pick(stages, column, `column on ${p.name}`) : stages[0];
+          if (stage) await addEntries(db, p.id, [contact.id], stage.id, user.id);
+        }
+      }
+      return { created: true, lead: await leadSummary(db, contact.id) };
     },
     { write: true },
   );

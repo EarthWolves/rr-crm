@@ -155,19 +155,22 @@ router.get('/export.csv', async (req, res) => {
   res.send('﻿' + lines.join('\r\n'));
 });
 
+// Insert a contact (owner defaults to the creator; trades are detected when not given). Shared by REST and MCP.
+export async function createContact(db, body, userId) {
+  const { rows } = await db.query(
+    `INSERT INTO contacts (${CORE_FIELDS.join(', ')}, tags, custom, owner_id, next_follow_up_at, created_by, trades)
+     VALUES (${CORE_FIELDS.map((_, i) => `$${i + 1}`).join(', ')}, $13, $14, $15, $16, $17, $18) RETURNING *`,
+    [...CORE_FIELDS.map((f) => body[f] ?? null), body.tags || [], body.custom || {},
+      body.owner_id === undefined ? userId : body.owner_id, body.next_follow_up_at ?? null, userId,
+      body.trades ?? classifyTrades(body)],
+  );
+  await logActivity(db, { contactId: rows[0].id, userId, type: 'contact.created', data: { name: rows[0].name } });
+  return rows[0];
+}
+
 router.post('/', async (req, res) => {
   const body = parse(contactSchema, req.body);
-  const contact = await tx(async (db) => {
-    const { rows } = await db.query(
-      `INSERT INTO contacts (${CORE_FIELDS.join(', ')}, tags, custom, owner_id, next_follow_up_at, created_by, trades)
-       VALUES (${CORE_FIELDS.map((_, i) => `$${i + 1}`).join(', ')}, $13, $14, $15, $16, $17, $18) RETURNING *`,
-      [...CORE_FIELDS.map((f) => body[f] ?? null), body.tags || [], body.custom || {},
-        body.owner_id === undefined ? req.user.id : body.owner_id, body.next_follow_up_at ?? null, req.user.id,
-        body.trades ?? classifyTrades(body)],
-    );
-    await logActivity(db, { contactId: rows[0].id, userId: req.user.id, type: 'contact.created', data: { name: rows[0].name } });
-    return rows[0];
-  });
+  const contact = await tx((db) => createContact(db, body, req.user.id));
   res.status(201).json({ contact });
 });
 
@@ -298,8 +301,8 @@ const clean = (v) => {
   return s === '' ? null : s;
 };
 
-const normPhone = (p) => (p ? String(p).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '') : '');
-const normSite = (w) => (w ? String(w).toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/+$/, '') : '');
+export const normPhone = (p) => (p ? String(p).replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '') : '');
+export const normSite = (w) => (w ? String(w).toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/+$/, '') : '');
 
 router.post('/import', async (req, res) => {
   const body = parse(importSchema, req.body);
