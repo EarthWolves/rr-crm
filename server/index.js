@@ -23,6 +23,9 @@ export function createApp() {
   app.use(express.json({ limit: '25mb' }));
   app.use(cookieParser());
 
+  // Private tool: keep it out of search engines.
+  app.use((req, res, next) => { res.set('X-Robots-Tag', 'noindex, nofollow'); next(); });
+
   app.get('/api/health', (req, res) => res.json({ ok: true }));
   app.use('/api/auth', authRouter);
 
