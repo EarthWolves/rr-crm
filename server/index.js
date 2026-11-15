@@ -12,6 +12,7 @@ import { router as contactsRouter } from './routes/contacts.js';
 import { router as pipelinesRouter } from './routes/pipelines.js';
 import { router as activityRouter } from './routes/activity.js';
 import { mcpRouter } from './mcp.js';
+import { inboundRouter } from './routes/inbound.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,6 +29,7 @@ export function createApp() {
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
   app.use('/api/auth', authRouter);
+  app.use('/api/public', inboundRouter);
 
   const api = express.Router();
   api.use(requireAuth);
