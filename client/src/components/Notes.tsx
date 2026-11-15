@@ -51,7 +51,7 @@ export function NoteCard({ note }: { note: Note }) {
     <div className={clsx('group rounded-xl border bg-white p-3', note.pinned ? 'border-amber-200 bg-amber-50/40' : 'border-gray-200')}>
       <div className="mb-1.5 flex items-center gap-2 text-xs text-gray-500">
         <Avatar user={note.user_name ? { name: note.user_name, color: note.user_color || '#999' } : null} size={18} />
-        <span className="font-medium text-gray-700">{note.user_name || 'Someone'}</span>
+        <span className="font-medium text-gray-700">{note.user_name || (note.body.startsWith('Website message') ? 'Website' : 'Someone')}</span>
         <span title={fmtDateTime(note.created_at)}>{timeAgo(note.created_at)}</span>
         {note.pinned && <Pin className="size-3 text-amber-500" />}
         <div className="ml-auto flex gap-0.5 opacity-0 transition group-hover:opacity-100">

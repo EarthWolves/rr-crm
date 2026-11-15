@@ -1,18 +1,47 @@
 @import "tailwindcss";
 
+/* Apple-style theme: system font, Apple neutrals, Apple blue as the accent. */
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", "Helvetica Neue", ui-sans-serif, system-ui, sans-serif;
+
+  --color-gray-50: #f5f5f7;
+  --color-gray-100: #ededf0;
+  --color-gray-200: #e3e3e8;
+  --color-gray-300: #d2d2d7;
+  --color-gray-400: #a1a1a6;
+  --color-gray-500: #86868b;
+  --color-gray-600: #6e6e73;
+  --color-gray-700: #48484a;
+  --color-gray-800: #2c2c2e;
+  --color-gray-900: #1d1d1f;
+
+  --color-indigo-50: #eef5fe;
+  --color-indigo-100: #dbeafd;
+  --color-indigo-200: #b5d4fb;
+  --color-indigo-300: #84b7f6;
+  --color-indigo-400: #3d8ef0;
+  --color-indigo-500: #0a7cff;
+  --color-indigo-600: #0071e3;
+  --color-indigo-700: #0060c0;
+  --color-indigo-800: #004d9a;
+  --color-indigo-900: #003a75;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 22px;
 }
 
 html, body, #root { height: 100%; }
-body { @apply bg-white text-gray-900 antialiased; font-size: 14px; }
+body { @apply bg-white text-gray-900 antialiased; font-size: 14px; letter-spacing: -0.01em; }
 
 @layer components {
   .input {
-    @apply w-full rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm outline-none transition placeholder:text-gray-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 disabled:bg-gray-50;
+    @apply w-full rounded-lg border border-transparent bg-gray-50 px-3 py-2 text-sm outline-none transition placeholder:text-gray-400 focus:border-indigo-600 focus:bg-white focus:ring-4 focus:ring-indigo-600/15 disabled:opacity-60;
   }
-  .label { @apply mb-1 block text-xs font-medium text-gray-500; }
-  .th { @apply sticky top-0 z-10 border-b border-r border-gray-100 bg-gray-50/95 px-3 py-2 text-left text-xs font-medium whitespace-nowrap text-gray-500 backdrop-blur; }
-  .td { @apply border-b border-r border-gray-100 px-3 py-1.5 whitespace-nowrap; }
-  .card { @apply rounded-xl border border-gray-200 bg-white; }
+  .label { @apply mb-1.5 block text-xs font-medium text-gray-500; }
+  .th { @apply sticky top-0 z-10 border-b border-gray-200 bg-white/90 px-3 py-2.5 text-left text-xs font-semibold whitespace-nowrap text-gray-500 backdrop-blur-xl; }
+  .td { @apply border-b border-gray-100 px-3 py-2 whitespace-nowrap; }
+  .card { @apply rounded-2xl bg-white ring-1 ring-black/5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.10)]; }
 }

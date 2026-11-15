@@ -35,10 +35,10 @@ export default function Login() {
     <div className="flex min-h-full items-center justify-center bg-gray-50 p-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <img src="/favicon.svg" className="size-10" alt="" />
+          <span className="grid size-14 place-items-center rounded-full bg-gray-900 text-2xl font-semibold text-white">R</span>
           <div>
-            <h1 className="text-xl font-semibold">{needsSetup ? 'Set up your workspace' : registering ? 'Join your team' : 'Sign in to RR CRM'}</h1>
-            <p className="mt-1 text-sm text-gray-500">
+            <h1 className="text-3xl font-bold tracking-tight">{needsSetup ? 'Set up your workspace' : registering ? 'Join your team' : 'Sign in to RR CRM'}</h1>
+            <p className="mt-2 text-[15px] text-gray-500">
               {needsSetup
                 ? 'You are the first user, so you will be the workspace admin.'
                 : registering
@@ -47,7 +47,7 @@ export default function Login() {
             </p>
           </div>
         </div>
-        <form onSubmit={submit} className="card space-y-3 p-5 shadow-sm">
+        <form onSubmit={submit} className="card space-y-4 p-7">
           {registering && (
             <Field label="Your name">
               <input className="input" value={form.name} onChange={set('name')} required autoFocus />
@@ -65,7 +65,7 @@ export default function Login() {
             </Field>
           )}
           {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
-          <Button variant="primary" className="w-full" loading={busy} type="submit">
+          <Button variant="primary" className="h-11 w-full text-[15px]" loading={busy} type="submit">
             {registering ? 'Create account' : 'Sign in'}
           </Button>
         </form>
