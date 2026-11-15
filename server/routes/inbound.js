@@ -73,6 +73,15 @@ inboundRouter.post('/contact', async (req, res) => {
         owner_id: null, next_follow_up_at: new Date().toISOString(),
       }, null);
       id = c.id;
+      await db.query(`UPDATE activity SET data = data || '{"source":"website"}' WHERE contact_id = $1 AND type = 'contact.created'`, [id]);
+      // New website leads start on the first step of the sales funnel, if there is one.
+      const { rows: f } = await db.query(
+        `SELECT p.id AS pipeline_id, s.id AS stage_id FROM pipelines p JOIN stages s ON s.pipeline_id = p.id
+         WHERE p.kind = 'funnel' ORDER BY p.position, p.created_at, s.position LIMIT 1`);
+      if (f[0]) {
+        await db.query('INSERT INTO pipeline_entries (pipeline_id, contact_id, stage_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+          [f[0].pipeline_id, id, f[0].stage_id]);
+      }
     }
     await addNote(db, id, { body: noteBody }, null);
     return id;
