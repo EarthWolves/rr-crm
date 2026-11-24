@@ -6,7 +6,7 @@ import cookieParser from 'cookie-parser';
 import compression from 'compression';
 import helmet from 'helmet';
 import { migrate } from './db.js';
-import { authRouter, initAuth, requireAuth } from './auth.js';
+import { authRouter, hiddenUserIds, hideUsers, initAuth, requireAuth } from './auth.js';
 import { HttpError, broadcastOnWrite, sseHandler } from './util.js';
 import { router as contactsRouter } from './routes/contacts.js';
 import { router as pipelinesRouter } from './routes/pipelines.js';
@@ -23,6 +23,7 @@ export function createApp() {
   app.use(compression({ filter: (req, res) => req.path !== '/api/events' && compression.filter(req, res) }));
   app.use(express.json({ limit: '25mb' }));
   app.use(cookieParser());
+  app.use(hideUsers);
 
   // Private tool: keep it out of search engines.
   app.use((req, res, next) => { res.set('X-Robots-Tag', 'noindex, nofollow'); next(); });
@@ -64,6 +65,7 @@ export function createApp() {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await migrate();
   await initAuth();
+  await hiddenUserIds().catch((err) => console.error('HIDDEN_USERS:', err.message));
   const port = process.env.PORT || 3000;
   createApp().listen(port, () => console.log(`RR CRM listening on http://localhost:${port}`));
 }

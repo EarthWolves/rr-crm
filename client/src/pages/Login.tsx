@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type User } from '../api';
+import { api, ApiError, type User } from '../api';
 import { Button, Field } from '../components/ui';
 
 export default function Login() {
@@ -23,6 +23,8 @@ export default function Login() {
         : await api.post<{ user: User }>('/auth/login', { email: form.email, password: form.password });
       qc.setQueryData(['me'], user);
     } catch (err) {
+      // The server answers 404 when this account is hidden; reloading shows its not-found page.
+      if (err instanceof ApiError && err.status === 404 && !registering) return window.location.reload();
       setError((err as Error).message);
     } finally {
       setBusy(false);
